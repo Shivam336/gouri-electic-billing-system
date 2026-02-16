@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Trash2, Printer, Save, RefreshCw, Search } from "lucide-react";
 
+import { pdf } from "@react-pdf/renderer";
+import InvoicePDF from "./InvoicePDF"; // Import the file you just made
+
 // Replace with your DEPLOYED Web App URL
 const API_URL =
   "https://script.google.com/macros/s/AKfycbxkAL4ORInQGzVUIATMvk5BRBesKahsHm74IUbB0oywwzUnCXbmLXTGgXKR7UM3ep4/exec";
@@ -69,6 +72,25 @@ const BillingPage = () => {
     0,
   );
 
+  const handlePrintEstimate = async () => {
+    if (!customerName || cart.length === 0) return alert("Fill details first!");
+
+    // Create the PDF Blob
+    const blob = await pdf(
+      <InvoicePDF
+        billId={billId}
+        customerName={customerName}
+        items={cart}
+        total={totalAmount}
+        type="Estimate"
+      />,
+    ).toBlob();
+
+    // Open it in a new tab
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  };
+
   // Confirm Bill Handler
   const handleConfirmBill = async () => {
     if (!customerName || cart.length === 0) {
@@ -94,6 +116,18 @@ const BillingPage = () => {
           })),
         }),
       });
+
+      const blob = await pdf(
+        <InvoicePDF
+          billId={billId}
+          customerName={customerName}
+          items={cart}
+          total={totalAmount}
+          type="Confirmed" // This changes the color to Green!
+        />,
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
 
       alert("Bill Saved Successfully!");
       setCart([]);
@@ -262,9 +296,7 @@ const BillingPage = () => {
           <div className="grid grid-cols-2 gap-3">
             <button
               className="flex items-center justify-center gap-2 border border-gray-300 p-2 rounded hover:bg-gray-100"
-              onClick={() =>
-                alert("Logic to Generate PDF via @react-pdf/renderer goes here")
-              }
+              onClick={handlePrintEstimate}
             >
               <Printer size={18} /> Estimate
             </button>
