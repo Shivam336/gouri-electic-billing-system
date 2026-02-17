@@ -5,24 +5,22 @@ import {
   Plus,
   User,
   Phone,
-  ArrowLeft,
   RefreshCw,
-  ChevronDown,
   Search,
   X,
   Minus,
-  Calendar,
 } from "lucide-react";
 import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "./InvoicePDF";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom"; // Import useLocation
 
 // 🔴 PASTE YOUR GOOGLE SCRIPT URL HERE
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbxPymWeFoW2IS0a_mCum2oA_d4WVE2phqH6ROr6FwMXssNqJ1vFvIJszu_IiO1hpqvx/exec";
+  "https://script.google.com/macros/s/AKfycbxL9l-XvqKYr5Kx3gjnDjLhg_Id2y-3S0ckvSmLiYaTy86edneLnu-v9n8AGNz_yyCv/exec";
 
 const TallyBillingPage = () => {
   const navigate = useNavigate();
+  const location = useLocation(); // Hook to get data from history page
 
   // --- STATE ---
   const [inventory, setInventory] = useState([]);
@@ -47,14 +45,48 @@ const TallyBillingPage = () => {
   });
   const gridRefs = useRef({});
   const suggestionRefs = useRef([]);
-  const mobileBottomRef = useRef(null); // Reference for mobile scrolling
+  const mobileBottomRef = useRef(null);
 
-  // --- INIT ---
+  // --- INIT & EDIT CHECK ---
   useEffect(() => {
     fetchStock();
-  }, []);
 
-  // Auto-scroll suggestion list (Desktop)
+    // Check if we arrived here via "Edit" button
+    if (
+      location.state &&
+      location.state.mode === "edit" &&
+      location.state.billData
+    ) {
+      const b = location.state.billData;
+
+      // Parse Date correctly (Handle "2026-02-17T00..." format)
+      let formattedDate = new Date().toISOString().split("T")[0];
+      if (b.date) {
+        try {
+          formattedDate = new Date(b.date).toISOString().split("T")[0];
+        } catch (e) {}
+      }
+
+      setBillMeta({
+        billNo: b.billNo,
+        date: formattedDate,
+        customerName: b.customerName,
+        mobile: b.mobile,
+      });
+
+      try {
+        const items = JSON.parse(b.items);
+        setRows(items);
+      } catch (e) {
+        console.error("Error parsing items for edit", e);
+      }
+
+      // Clear history so refresh doesn't keep reloading edit mode
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
+
+  // Auto-scroll suggestion list
   useEffect(() => {
     if (
       suggestions.visible &&
@@ -109,7 +141,6 @@ const TallyBillingPage = () => {
         (parseFloat(newRows[index].price) || 0);
     }
 
-    // Desktop Search Logic
     if (field === "item") {
       if (value.trim() === "") {
         setSuggestions({
@@ -133,7 +164,6 @@ const TallyBillingPage = () => {
     setRows(newRows);
   };
 
-  // Select Item Logic (Shared)
   const selectItem = (rowIndex, product) => {
     const newRows = [...rows];
     if (!newRows[rowIndex]) newRows[rowIndex] = getEmptyRow();
@@ -165,20 +195,16 @@ const TallyBillingPage = () => {
 
   const handleMobileAddItem = (product) => {
     let targetIndex = rows.length - 1;
-    // Use last row if empty, otherwise create new
     if (rows[targetIndex].item !== "") {
       setRows((prev) => [...prev, getEmptyRow()]);
       targetIndex++;
     }
-
-    // Update State
     const newRows = [...rows];
-    if (rows[rows.length - 1].item !== "") newRows.push(getEmptyRow()); // Ensure logic consistency
+    if (rows[rows.length - 1].item !== "") newRows.push(getEmptyRow());
 
-    // We replicate selectItem logic here because state update 'rows' isn't immediate
     newRows[targetIndex] = {
       ...newRows[targetIndex],
-      id: Date.now(), // New ID ensures re-render
+      id: Date.now(),
       item: product.item,
       brand: product.brand,
       realRowIndex: product.realRowIndex,
@@ -192,12 +218,9 @@ const TallyBillingPage = () => {
       amount: (parseFloat(product.price1) || 0) * 1,
       qty: 1,
     };
-
     setRows(newRows);
     setMobileSearchOpen(false);
     setMobileSearchTerm("");
-
-    // Scroll to bottom after small delay for render
     setTimeout(() => {
       mobileBottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, 100);
@@ -282,6 +305,7 @@ const TallyBillingPage = () => {
         body: JSON.stringify({
           action: "confirmBill",
           billId: billMeta.billNo,
+          date: billMeta.date, // Sending Date to Script
           customerName: billMeta.customerName,
           mobile: billMeta.mobile,
           total: grandTotal,
@@ -299,14 +323,19 @@ const TallyBillingPage = () => {
         />,
       ).toBlob();
       window.open(URL.createObjectURL(blob), "_blank");
+
+      // Reset Logic
       setRows([getEmptyRow()]);
       setBillMeta({
         ...billMeta,
         customerName: "",
         mobile: "",
-        billNo: `INV-${Math.floor(Math.random() * 9000)}`,
+        billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
       });
       fetchStock();
+
+      // Optional: Go back to history if needed
+      // navigate('/history');
     } catch (e) {
       alert("Error saving bill");
     }
@@ -318,7 +347,6 @@ const TallyBillingPage = () => {
     0,
   );
 
-  // Mobile Filter
   const mobileFilteredInventory = inventory
     .filter(
       (p) =>
@@ -328,28 +356,21 @@ const TallyBillingPage = () => {
     .slice(0, 50);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-50 font-sans text-sm h-[100dvh] w-screen overflow-hidden">
-      {/* ================================================================================= */}
-      {/* 💻 DESKTOP HEADER (Visible ONLY on MD+)                                         */}
-      {/* ================================================================================= */}
+    <div className="flex flex-col h-full w-full bg-gray-50 font-sans text-sm overflow-hidden relative">
+      {/* 💻 DESKTOP HEADER */}
       <div className="hidden md:flex bg-blue-900 text-white p-3 shadow-md shrink-0 w-full z-40 justify-between items-center">
-        {/* Left: Back, Bill No, Divider, Date */}
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate("/")}
-              className="p-2 hover:bg-blue-800 rounded-full text-blue-200 transition-colors"
-            >
-              <ArrowLeft size={22} />
-            </button>
-            <div className="flex flex-col">
-              <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-                Bill No
-              </span>
-              <span className="font-bold text-xl leading-none tracking-wide">
-                {billMeta.billNo}
-              </span>
-            </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
+              Bill No
+            </span>
+            <input
+              className="bg-transparent font-bold text-xl leading-none tracking-wide text-white outline-none w-40"
+              value={billMeta.billNo}
+              onChange={(e) =>
+                setBillMeta({ ...billMeta, billNo: e.target.value })
+              }
+            />
           </div>
           <div className="h-10 w-px bg-blue-700"></div>
           <div className="flex flex-col">
@@ -366,8 +387,6 @@ const TallyBillingPage = () => {
             />
           </div>
         </div>
-
-        {/* Right: Stock Status, Customer, Mobile */}
         <div className="flex items-center gap-3">
           <div className="flex flex-col items-end mr-4">
             <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
@@ -394,7 +413,6 @@ const TallyBillingPage = () => {
               </button>
             </div>
           </div>
-
           <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 w-64 h-11 px-3">
             <User className="text-blue-300 shrink-0" size={18} />
             <input
@@ -406,7 +424,6 @@ const TallyBillingPage = () => {
               }
             />
           </div>
-
           <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 w-44 h-11 px-3">
             <Phone className="text-blue-300 shrink-0" size={18} />
             <input
@@ -422,23 +439,26 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* ================================================================================= */}
-      {/* 📱 MOBILE HEADER (Compact - Visible ONLY on Small Screens)                       */}
-      {/* ================================================================================= */}
+      {/* 📱 MOBILE HEADER */}
       <div className="md:hidden bg-blue-900 text-white shadow-md shrink-0 w-full z-40">
-        {/* Row 1: Top Bar (Tiny) */}
         <div className="flex justify-between items-center px-3 py-2 border-b border-blue-800">
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate("/")}>
-              <ArrowLeft size={18} className="text-blue-200" />
-            </button>
-            <span className="font-mono text-blue-100 text-xs">
-              {billMeta.billNo}
-            </span>
+          <div className="flex items-center gap-2 w-full">
+            <input
+              className="font-mono text-blue-100 text-xs font-bold bg-transparent outline-none w-24"
+              value={billMeta.billNo}
+              onChange={(e) =>
+                setBillMeta({ ...billMeta, billNo: e.target.value })
+              }
+            />
             <span className="text-blue-500 text-[10px]">|</span>
-            <span className="text-blue-100 text-xs">
-              {billMeta.date.split("-").reverse().join("/")}
-            </span>
+            <input
+              type="date"
+              className="text-blue-100 text-xs bg-transparent outline-none w-24"
+              value={billMeta.date}
+              onChange={(e) =>
+                setBillMeta({ ...billMeta, date: e.target.value })
+              }
+            />
           </div>
           <div>
             {stockLoading && (
@@ -446,8 +466,6 @@ const TallyBillingPage = () => {
             )}
           </div>
         </div>
-
-        {/* Row 2: Customer Inputs (Combined Line) */}
         <div className="flex items-center p-2 gap-2">
           <div className="flex-1 flex items-center bg-blue-800 rounded px-2 py-1.5 border border-blue-700">
             <User size={14} className="text-blue-400 mr-2" />
@@ -475,9 +493,7 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* ================================================================================= */}
-      {/* 📱 MOBILE CONTENT (Card View)                                                   */}
-      {/* ================================================================================= */}
+      {/* 📱 MOBILE CONTENT */}
       <div className="flex-1 md:hidden overflow-y-auto p-3 space-y-3 pb-24 bg-gray-50">
         {rows.map((row, index) => {
           if (!row.item) return null;
@@ -502,7 +518,6 @@ const TallyBillingPage = () => {
                   <Trash2 size={16} />
                 </button>
               </div>
-
               <div className="flex items-center gap-2">
                 <div className="flex items-center border rounded-lg bg-gray-50 h-9 w-[35%]">
                   <button
@@ -540,7 +555,6 @@ const TallyBillingPage = () => {
                     <Plus size={14} />{" "}
                   </button>
                 </div>
-
                 <div className="relative h-9 w-[25%] border rounded-lg bg-white">
                   <select
                     className="w-full h-full px-1 text-[10px] font-bold appearance-none bg-transparent outline-none"
@@ -555,7 +569,6 @@ const TallyBillingPage = () => {
                     )}
                   </select>
                 </div>
-
                 <div className="h-9 w-[40%] border rounded-lg bg-white flex items-center px-2">
                   <span className="text-gray-400 text-xs mr-1">₹</span>
                   <input
@@ -568,7 +581,6 @@ const TallyBillingPage = () => {
                   />
                 </div>
               </div>
-
               <div className="border-t pt-2 flex justify-end items-center gap-2">
                 <span className="text-lg font-bold text-blue-900">
                   ₹{(row.amount || 0).toLocaleString()}
@@ -578,13 +590,11 @@ const TallyBillingPage = () => {
           );
         })}
 
-        {/* INVISIBLE ELEMENT TO SCROLL TO */}
         <div ref={mobileBottomRef} className="h-4" />
 
-        {/* ADD BUTTON (MOBILE) */}
         <button
           onClick={() => setMobileSearchOpen(true)}
-          className="fixed bottom-20 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg shadow-blue-200 active:scale-90 transition z-10"
+          className="fixed bottom-44 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg shadow-blue-200 active:scale-90 transition z-50"
         >
           <Plus size={24} />
         </button>
@@ -631,9 +641,7 @@ const TallyBillingPage = () => {
         </div>
       )}
 
-      {/* ================================================================================= */}
-      {/* 💻 DESKTOP CONTENT (Grid View)                                                  */}
-      {/* ================================================================================= */}
+      {/* 💻 DESKTOP GRID */}
       <div className="hidden md:flex flex-1 w-full overflow-hidden flex-col relative bg-white">
         <div className="overflow-auto w-full h-full">
           <div className="w-full flex flex-col">
@@ -659,7 +667,6 @@ const TallyBillingPage = () => {
               </div>
               <div className="w-12 text-center p-3">Del</div>
             </div>
-
             <div className="pb-24 bg-white min-h-[500px]">
               {rows.map((row, index) => (
                 <div
@@ -669,7 +676,6 @@ const TallyBillingPage = () => {
                   <div className="w-10 p-2 flex items-center justify-center text-gray-400 border-r text-xs">
                     {index + 1}
                   </div>
-
                   <div className="flex-1 relative border-r">
                     <input
                       ref={(el) => (gridRefs.current[`${index}-item`] = el)}
@@ -709,7 +715,6 @@ const TallyBillingPage = () => {
                       </div>
                     )}
                   </div>
-
                   <div className="w-20 p-2 flex items-center justify-end text-xs text-gray-500 border-r bg-gray-50">
                     {row.stock}
                   </div>
@@ -773,8 +778,8 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* FOOTER (Unified) */}
-      <div className="bg-white border-t border-gray-200 p-3 shrink-0 z-40 w-full shadow-[0_-5px_20px_rgba(0,0,0,0.05)]">
+      {/* FOOTER */}
+      <div className="bg-white border-t border-gray-200 p-3 shrink-0 z-40 w-full shadow-[0_-5px_20px_rgba(0,0,0,0.05)] md:shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
         <div className="flex flex-row justify-between items-center gap-2">
           <div className="flex flex-col text-xs text-gray-600">
             <span>
