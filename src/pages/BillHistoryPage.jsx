@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 
 // 🔴 PASTE YOUR GOOGLE SCRIPT URL HERE
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbxL9l-XvqKYr5Kx3gjnDjLhg_Id2y-3S0ckvSmLiYaTy86edneLnu-v9n8AGNz_yyCv/exec";
+  "https://script.google.com/macros/s/AKfycbxEyFNimLW1HMuafE8vzIDbUD_D2cYho4AgSkQHmaMbCYSIcXCYiv2yhsD9ygBapqOE/exec";
 
 const BillHistoryPage = () => {
   const navigate = useNavigate();
