@@ -8,6 +8,9 @@ import {
   ArrowLeft,
   RefreshCw,
   ChevronDown,
+  Search,
+  X,
+  Minus,
 } from "lucide-react";
 import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "./InvoicePDF";
@@ -25,6 +28,8 @@ const TallyBillingPage = () => {
   const [rows, setRows] = useState([getEmptyRow()]);
   const [loading, setLoading] = useState(false);
   const [stockLoading, setStockLoading] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false); // New Mobile State
+  const [mobileSearchTerm, setMobileSearchTerm] = useState(""); // New Mobile Search
 
   const [billMeta, setBillMeta] = useState({
     billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -39,7 +44,6 @@ const TallyBillingPage = () => {
     list: [],
     highlightIndex: 0,
   });
-
   const gridRefs = useRef({});
   const suggestionRefs = useRef([]);
 
@@ -48,14 +52,14 @@ const TallyBillingPage = () => {
     fetchStock();
   }, []);
 
-  // FIND THIS useEffect (around line 40)
+  // Auto-scroll suggestion list (Desktop)
   useEffect(() => {
     if (
       suggestions.visible &&
       suggestionRefs.current[suggestions.highlightIndex]
     ) {
       suggestionRefs.current[suggestions.highlightIndex].scrollIntoView({
-        behavior: "auto", // CHANGE 'smooth' TO 'auto' (Instant scroll)
+        behavior: "auto",
         block: "nearest",
       });
     }
@@ -102,6 +106,8 @@ const TallyBillingPage = () => {
         (parseFloat(newRows[index].qty) || 0) *
         (parseFloat(newRows[index].price) || 0);
     }
+
+    // Desktop Search Logic
     if (field === "item") {
       if (value.trim() === "") {
         setSuggestions({
@@ -125,8 +131,12 @@ const TallyBillingPage = () => {
     setRows(newRows);
   };
 
+  // Select Item Logic (Shared)
   const selectItem = (rowIndex, product) => {
     const newRows = [...rows];
+    // If we are adding via mobile search, we might need to add a new row first
+    if (!newRows[rowIndex]) newRows[rowIndex] = getEmptyRow();
+
     newRows[rowIndex] = {
       ...newRows[rowIndex],
       item: product.item,
@@ -149,7 +159,21 @@ const TallyBillingPage = () => {
       list: [],
       highlightIndex: 0,
     });
-    focusCell(rowIndex, "qty");
+
+    // Focus logic for desktop
+    setTimeout(() => focusCell(rowIndex, "qty"), 50);
+  };
+
+  const handleMobileAddItem = (product) => {
+    // 1. Check if the last row is empty. If so, use it. If not, add new.
+    let targetIndex = rows.length - 1;
+    if (rows[targetIndex].item !== "") {
+      setRows((prev) => [...prev, getEmptyRow()]);
+      targetIndex++;
+    }
+    selectItem(targetIndex, product);
+    setMobileSearchOpen(false);
+    setMobileSearchTerm("");
   };
 
   const handleKeyDown = (e, index, field) => {
@@ -205,8 +229,11 @@ const TallyBillingPage = () => {
     setTimeout(() => focusCell(rows.length, "item"), 50);
   };
   const removeRow = (index) => {
-    if (rows.length <= 1) return;
-    setRows(rows.filter((_, i) => i !== index));
+    if (rows.length <= 1) {
+      setRows([getEmptyRow()]); // Reset to empty if last one
+    } else {
+      setRows(rows.filter((_, i) => i !== index));
+    }
   };
   const focusCell = (rowIndex, field) => {
     const el = gridRefs.current[`${rowIndex}-${field}`];
@@ -264,131 +291,266 @@ const TallyBillingPage = () => {
     0,
   );
 
+  // --- MOBILE SEARCH FILTER ---
+  const mobileFilteredInventory = inventory
+    .filter(
+      (p) =>
+        p.item.toLowerCase().includes(mobileSearchTerm.toLowerCase()) ||
+        p.brand.toLowerCase().includes(mobileSearchTerm.toLowerCase()),
+    )
+    .slice(0, 50);
+
   return (
-    // 1. FIXED INSET-0 forces full screen (overlaps App.js padding)
-    <div className="fixed inset-0 z-50 flex flex-col bg-white font-sans text-sm h-[100dvh] w-screen overflow-hidden">
-      {/* HEADER */}
-      {/* HEADER */}
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-50 font-sans text-sm h-[100dvh] w-screen overflow-hidden">
+      {/* --- HEADER (Unified) --- */}
       <div className="bg-blue-900 text-white p-3 shadow-md shrink-0 w-full z-40">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-3 md:gap-0">
-          {/* LEFT SIDE: Back, Bill No, Date */}
-          <div className="flex justify-between md:justify-start items-center w-full md:w-auto gap-0 md:gap-6">
-            {/* Back Button & Bill No */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => navigate("/")}
-                className="p-2 hover:bg-blue-800 rounded-full text-blue-200 transition-colors"
-              >
-                <ArrowLeft size={22} />
-              </button>
-              <div className="flex flex-col">
-                <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-                  Bill No
-                </span>
-                <span className="font-bold text-xl leading-none tracking-wide">
-                  {billMeta.billNo}
-                </span>
-              </div>
-            </div>
-
-            {/* Vertical Divider (Visible on Laptop only) */}
-            <div className="hidden md:block h-10 w-px bg-blue-700"></div>
-
-            {/* Date Input */}
-            <div className="flex flex-col items-end md:items-start">
-              <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-                Date
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/")}
+              className="p-1.5 bg-blue-800 rounded-full text-blue-100 active:scale-95 transition"
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-blue-300 uppercase tracking-widest font-bold">
+                Bill No
               </span>
-              <input
-                type="date"
-                className="bg-transparent font-bold outline-none text-white text-lg w-36 cursor-pointer"
-                value={billMeta.date}
-                onChange={(e) =>
-                  setBillMeta({ ...billMeta, date: e.target.value })
-                }
-              />
+              <span className="font-bold text-lg leading-none">
+                {billMeta.billNo}
+              </span>
             </div>
           </div>
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-blue-300 uppercase tracking-widest font-bold">
+              Date
+            </span>
+            <input
+              type="date"
+              className="bg-transparent font-bold outline-none text-white text-sm text-right w-28"
+              value={billMeta.date}
+              onChange={(e) =>
+                setBillMeta({ ...billMeta, date: e.target.value })
+              }
+            />
+          </div>
+        </div>
 
-          {/* RIGHT SIDE: Stock Status & Customer Inputs */}
-          <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
-            {/* Stock Status (Hidden on very small mobile screens to save space, visible on Laptop) */}
-            <div className="hidden md:flex flex-col items-end mr-4">
-              <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-                Stock Status
-              </span>
-              <div className="flex items-center gap-2 text-xs font-medium">
-                {stockLoading ? (
-                  <span className="text-yellow-300 animate-pulse">
-                    Syncing...
-                  </span>
-                ) : (
-                  <span className="text-green-400 flex items-center gap-1">
-                    ● Live
-                  </span>
-                )}
-                <button
-                  onClick={fetchStock}
-                  className="hover:bg-blue-800 p-1 rounded-full transition-colors"
-                >
-                  <RefreshCw
-                    size={14}
-                    className={stockLoading ? "animate-spin" : "opacity-70"}
-                  />
-                </button>
-              </div>
-            </div>
-
-            {/* Customer Inputs Group */}
-            <div className="flex gap-2 w-full md:w-auto">
-              {/* Customer Name */}
-              <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30 w-full md:w-64 h-11 px-3">
-                <User className="text-blue-300 shrink-0" size={18} />
-                <input
-                  className="bg-transparent p-2 text-white placeholder-blue-300/70 outline-none font-semibold w-full text-sm"
-                  placeholder="Customer Name"
-                  value={billMeta.customerName}
-                  onChange={(e) =>
-                    setBillMeta({ ...billMeta, customerName: e.target.value })
-                  }
-                />
-              </div>
-
-              {/* Mobile Number */}
-              <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30 w-full md:w-44 h-11 px-3">
-                <Phone className="text-blue-300 shrink-0" size={18} />
-                <input
-                  className="bg-transparent p-2 text-white placeholder-blue-300/70 outline-none font-medium w-full text-sm"
-                  placeholder="Mobile"
-                  inputMode="numeric"
-                  value={billMeta.mobile}
-                  onChange={(e) =>
-                    setBillMeta({ ...billMeta, mobile: e.target.value })
-                  }
-                />
-              </div>
+        {/* Customer Inputs */}
+        <div className="flex flex-col md:flex-row gap-2">
+          <div className="flex items-center bg-blue-800 rounded-lg border border-blue-700 w-full px-3 py-1">
+            <User className="text-blue-300 shrink-0" size={18} />
+            <input
+              className="bg-transparent p-2 text-white placeholder-blue-300 outline-none font-semibold w-full"
+              placeholder="Customer Name"
+              value={billMeta.customerName}
+              onChange={(e) =>
+                setBillMeta({ ...billMeta, customerName: e.target.value })
+              }
+            />
+          </div>
+          <div className="flex gap-2 w-full">
+            <div className="flex items-center bg-blue-800 rounded-lg border border-blue-700 flex-1 px-3 py-1">
+              <Phone className="text-blue-300 shrink-0" size={18} />
+              <input
+                className="bg-transparent p-2 text-white placeholder-blue-300 outline-none w-full"
+                placeholder="Mobile"
+                inputMode="numeric"
+                value={billMeta.mobile}
+                onChange={(e) =>
+                  setBillMeta({ ...billMeta, mobile: e.target.value })
+                }
+              />
             </div>
           </div>
         </div>
       </div>
 
-      {/* MAIN GRID AREA */}
-      <div className="flex-1 w-full overflow-hidden flex flex-col relative bg-gray-50">
-        {/* INNER SCROLL CONTAINER */}
+      {/* ================================================================================= */}
+      {/* 📱 MOBILE LAYOUT (VISIBLE ONLY ON MOBILE)                                        */}
+      {/* ================================================================================= */}
+      <div className="flex-1 md:hidden overflow-y-auto p-3 space-y-3 pb-24">
+        {/* ITEM CARDS */}
+        {rows.map((row, index) => {
+          if (!row.item) return null; // Don't show empty rows in card view
+          return (
+            <div
+              key={row.id}
+              className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-3"
+            >
+              {/* Row 1: Name & Delete */}
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <h3 className="font-bold text-gray-800 text-sm">
+                    {row.item}
+                  </h3>
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Stock: {row.stock}
+                  </p>
+                </div>
+                <button
+                  onClick={() => removeRow(index)}
+                  className="text-gray-300 p-1 hover:text-red-500"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+
+              {/* Row 2: Controls */}
+              <div className="flex items-center gap-3">
+                {/* Qty Stepper */}
+                <div className="flex items-center border rounded-lg bg-gray-50 h-10 w-1/3">
+                  <button
+                    className="px-3 h-full flex items-center justify-center text-gray-500 active:bg-gray-200 rounded-l-lg"
+                    onClick={() =>
+                      handleInputChange(
+                        index,
+                        "qty",
+                        Math.max(1, (parseFloat(row.qty) || 0) - 1),
+                      )
+                    }
+                  >
+                    {" "}
+                    <Minus size={14} />{" "}
+                  </button>
+                  <input
+                    className="w-full text-center bg-transparent font-bold outline-none text-sm"
+                    type="number"
+                    value={row.qty}
+                    onChange={(e) =>
+                      handleInputChange(index, "qty", e.target.value)
+                    }
+                  />
+                  <button
+                    className="px-3 h-full flex items-center justify-center text-gray-500 active:bg-gray-200 rounded-r-lg"
+                    onClick={() =>
+                      handleInputChange(
+                        index,
+                        "qty",
+                        (parseFloat(row.qty) || 0) + 1,
+                      )
+                    }
+                  >
+                    {" "}
+                    <Plus size={14} />{" "}
+                  </button>
+                </div>
+
+                {/* Unit Select */}
+                <div className="relative h-10 w-1/3 border rounded-lg bg-white">
+                  <select
+                    className="w-full h-full px-2 text-xs font-bold appearance-none bg-transparent outline-none"
+                    value={row.unit}
+                    onChange={(e) => handleUnitChange(index, e.target.value)}
+                  >
+                    {row.unit1 && (
+                      <option value={row.unit1}>{row.unit1}</option>
+                    )}
+                    {row.unit2 && (
+                      <option value={row.unit2}>{row.unit2}</option>
+                    )}
+                  </select>
+                  <ChevronDown
+                    size={12}
+                    className="absolute right-2 top-3 text-gray-400 pointer-events-none"
+                  />
+                </div>
+
+                {/* Price Input */}
+                <div className="h-10 w-1/3 border rounded-lg bg-white flex items-center px-2">
+                  <span className="text-gray-400 text-xs mr-1">₹</span>
+                  <input
+                    className="w-full font-bold text-right outline-none text-sm"
+                    type="number"
+                    value={row.price}
+                    onChange={(e) =>
+                      handleInputChange(index, "price", e.target.value)
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Total */}
+              <div className="border-t pt-2 flex justify-end items-center gap-2">
+                <span className="text-xs text-gray-400 uppercase">Total:</span>
+                <span className="text-lg font-bold text-blue-900">
+                  ₹{(row.amount || 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* EMPTY STATE */}
+        {rows.filter((r) => r.item).length === 0 && (
+          <div className="flex flex-col items-center justify-center h-40 text-gray-400 opacity-50">
+            <Search size={40} />
+            <span className="text-xs mt-2">No items added yet</span>
+          </div>
+        )}
+
+        {/* ADD BUTTON (MOBILE) */}
+        <button
+          onClick={() => setMobileSearchOpen(true)}
+          className="fixed bottom-24 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg shadow-blue-200 active:scale-90 transition z-10"
+        >
+          <Plus size={24} />
+        </button>
+      </div>
+
+      {/* 📱 MOBILE SEARCH OVERLAY */}
+      {mobileSearchOpen && (
+        <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-200">
+          <div className="p-4 border-b flex gap-3 items-center">
+            <Search className="text-gray-400" size={20} />
+            <input
+              autoFocus
+              className="flex-1 text-lg outline-none font-medium"
+              placeholder="Search Item..."
+              value={mobileSearchTerm}
+              onChange={(e) => setMobileSearchTerm(e.target.value)}
+            />
+            <button
+              onClick={() => setMobileSearchOpen(false)}
+              className="bg-gray-100 p-2 rounded-full"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            {mobileFilteredInventory.map((item, i) => (
+              <div
+                key={i}
+                onClick={() => handleMobileAddItem(item)}
+                className="p-4 border-b border-gray-50 active:bg-blue-50 flex justify-between items-center"
+              >
+                <div>
+                  <p className="font-bold text-gray-800">{item.item}</p>
+                  <p className="text-xs text-gray-400">{item.brand}</p>
+                </div>
+                <span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded">
+                  Stk: {item.stock}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================================= */}
+      {/* 💻 DESKTOP LAYOUT (VISIBLE ONLY ON LAPTOP)                                        */}
+      {/* ================================================================================= */}
+      <div className="hidden md:flex flex-1 w-full overflow-hidden flex-col relative bg-white">
         <div className="overflow-auto w-full h-full">
-          {/* TABLE CONTAINER: Min-width for mobile, Full width for Desktop */}
-          <div className="min-w-[900px] md:min-w-0 md:w-full flex flex-col">
-            {/* HEADERS */}
+          <div className="w-full flex flex-col">
+            {/* TABLE HEAD */}
             <div className="flex bg-gray-100 border-b border-gray-300 text-xs font-bold text-gray-700 uppercase sticky top-0 z-30">
-              <div className="w-10 p-3 text-center border-r border-gray-300 sticky left-0 bg-gray-100 z-40 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
+              <div className="w-10 p-3 text-center border-r border-gray-300">
                 #
               </div>
-
-              {/* Item Header (Flexible) */}
-              <div className="w-[250px] md:flex-1 p-3 border-r border-gray-300 sticky left-10 bg-gray-100 z-40 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                Item
+              <div className="flex-1 p-3 border-r border-gray-300">
+                Item Description
               </div>
-
               <div className="w-20 p-3 text-right border-r border-gray-300">
                 Stock
               </div>
@@ -405,34 +567,22 @@ const TallyBillingPage = () => {
               <div className="w-12 text-center p-3">Del</div>
             </div>
 
-            {/* BODY */}
+            {/* TABLE BODY */}
             <div className="pb-24 bg-white min-h-[500px]">
               {rows.map((row, index) => (
                 <div
                   key={row.id}
                   className={`flex border-b border-gray-200 ${index % 2 === 0 ? "bg-white" : "bg-gray-50"}`}
                 >
-                  {/* # Sticky Left */}
-                  <div
-                    className="w-10 p-2 flex items-center justify-center text-gray-400 border-r text-xs sticky left-0 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.05)]"
-                    style={{
-                      backgroundColor: index % 2 === 0 ? "white" : "#f9fafb",
-                    }}
-                  >
+                  <div className="w-10 p-2 flex items-center justify-center text-gray-400 border-r text-xs">
                     {index + 1}
                   </div>
 
-                  {/* Item Input Sticky Left */}
-                  {/* ITEM INPUT */}
-                  <div
-                    className="w-[250px] md:flex-1 relative border-r sticky left-10 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.05)]"
-                    style={{
-                      backgroundColor: index % 2 === 0 ? "white" : "#f9fafb",
-                    }}
-                  >
+                  {/* Desktop Item Input */}
+                  <div className="flex-1 relative border-r">
                     <input
                       ref={(el) => (gridRefs.current[`${index}-item`] = el)}
-                      className="w-full h-full p-3 outline-none bg-transparent font-semibold text-gray-800 uppercase text-xs md:text-sm text-left" // Added text-left
+                      className="w-full h-full p-3 outline-none bg-transparent font-semibold text-gray-800 uppercase text-sm text-left"
                       value={row.item}
                       placeholder={
                         index === rows.length - 1 ? "Type Item..." : ""
@@ -443,37 +593,23 @@ const TallyBillingPage = () => {
                       onKeyDown={(e) => handleKeyDown(e, index, "item")}
                       autoComplete="off"
                     />
-
-                    {/* SUGGESTIONS DROPDOWN */}
                     {suggestions.visible && suggestions.rowIndex === index && (
-                      <div className="fixed left-0 right-0 md:absolute md:left-0 md:right-0 md:w-full bg-white border border-blue-600 shadow-2xl z-50 max-h-[40vh] overflow-y-auto mt-1 rounded-b-lg">
+                      <div className="absolute left-0 top-full w-full bg-white border border-blue-600 shadow-2xl z-50 max-h-[50vh] overflow-y-auto mt-1 rounded-b-lg">
                         {suggestions.list.map((item, i) => (
                           <div
                             key={item.realRowIndex}
                             ref={(el) => (suggestionRefs.current[i] = el)}
-                            // Added 'text-left' and 'items-center'
-                            className={`p-2.5 px-4 flex justify-between items-center cursor-pointer border-b border-gray-100 text-left ${
-                              i === suggestions.highlightIndex
-                                ? "bg-blue-600 text-white"
-                                : "text-gray-800 hover:bg-gray-50"
-                            }`}
+                            className={`flex justify-start items-center p-2.5 px-4 cursor-pointer border-b border-gray-100 text-left ${i === suggestions.highlightIndex ? "bg-blue-600 text-white" : "text-gray-800 hover:bg-gray-50"}`}
                             onMouseDown={(e) => {
-                              e.preventDefault(); // Prevents input blur issue
+                              e.preventDefault();
                               selectItem(index, item);
                             }}
                           >
-                            {/* Item Name - Forced Left Align */}
                             <span className="font-bold text-sm uppercase truncate flex-1 text-left mr-4">
                               {item.item}
                             </span>
-
-                            {/* Stock - Fixed Width on Right */}
                             <span
-                              className={`text-xs font-mono whitespace-nowrap ${
-                                i === suggestions.highlightIndex
-                                  ? "text-blue-100"
-                                  : "text-gray-500"
-                              }`}
+                              className={`text-xs font-mono whitespace-nowrap ${i === suggestions.highlightIndex ? "text-blue-100" : "text-gray-500"}`}
                             >
                               Stk: {item.stock}
                             </span>
@@ -490,7 +626,6 @@ const TallyBillingPage = () => {
                     <input
                       ref={(el) => (gridRefs.current[`${index}-qty`] = el)}
                       type="number"
-                      inputMode="numeric"
                       className="w-full h-full p-2 text-right outline-none bg-transparent font-bold text-black focus:bg-yellow-100"
                       value={row.qty}
                       onChange={(e) =>
@@ -501,7 +636,7 @@ const TallyBillingPage = () => {
                   </div>
                   <div className="w-24 border-r bg-white relative">
                     <select
-                      className="w-full h-full p-2 bg-transparent outline-none text-xs font-bold appearance-none"
+                      className="w-full h-full p-2 bg-transparent outline-none text-xs font-bold appearance-none cursor-pointer"
                       value={row.unit}
                       onChange={(e) => handleUnitChange(index, e.target.value)}
                     >
@@ -521,7 +656,6 @@ const TallyBillingPage = () => {
                     <input
                       ref={(el) => (gridRefs.current[`${index}-price`] = el)}
                       type="number"
-                      inputMode="numeric"
                       className="w-full h-full p-2 text-right outline-none bg-transparent text-black focus:bg-yellow-100 text-sm font-medium"
                       value={row.price}
                       onChange={(e) =>
@@ -552,14 +686,14 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <div className="bg-gray-100 border-t border-gray-300 p-3 shrink-0 z-40 w-full shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
+      {/* FOOTER (Unified) */}
+      <div className="bg-white border-t border-gray-200 p-3 shrink-0 z-40 w-full shadow-[0_-5px_20px_rgba(0,0,0,0.05)] md:shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
         <div className="flex flex-row justify-between items-center gap-2">
           <div className="flex flex-col text-xs text-gray-600">
             <span>
               Items: <b>{rows.filter((r) => r.amount > 0).length}</b>
             </span>
-            <span>
+            <span className="hidden md:inline">
               Qty:{" "}
               <b>{rows.reduce((s, r) => s + (parseFloat(r.qty) || 0), 0)}</b>
             </span>
@@ -576,7 +710,7 @@ const TallyBillingPage = () => {
             <button
               onClick={handleConfirm}
               disabled={loading}
-              className="bg-green-600 text-white px-4 py-3 rounded shadow hover:bg-green-700 disabled:bg-gray-400 font-bold flex items-center gap-2 text-sm uppercase"
+              className="bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg hover:bg-green-700 disabled:bg-gray-400 font-bold flex items-center gap-2 text-sm uppercase transition-transform active:scale-95"
             >
               {loading ? (
                 <RefreshCw className="animate-spin" size={18} />
