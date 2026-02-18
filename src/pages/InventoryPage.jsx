@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo, useContext, useEffect } from "react";
 import {
   Search,
   Plus,
@@ -9,12 +9,8 @@ import {
   Save,
   RefreshCw,
 } from "lucide-react";
+import { DataContext } from "../context/DataContext";
 
-// 🔴 PASTE YOUR GOOGLE SCRIPT URL HERE
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbxEyFNimLW1HMuafE8vzIDbUD_D2cYho4AgSkQHmaMbCYSIcXCYiv2yhsD9ygBapqOE/exec";
-
-// --- HELPER COMPONENT (Moved to top to prevent crashes) ---
 const Input = ({
   label,
   value,
@@ -31,7 +27,7 @@ const Input = ({
     <input
       type={type}
       className="p-2 rounded border border-gray-300 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition text-sm font-medium"
-      value={value || ""} // ⚡️ FIX: Ensures value is never undefined
+      value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       required={required}
       placeholder={placeholder}
@@ -41,35 +37,16 @@ const Input = ({
 );
 
 const InventoryPage = () => {
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
+  const { inventory, addProduct, updateProduct, deleteProduct, loading } =
+    useContext(DataContext);
 
-  // Modal State
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState(""); // ⚡️ For smooth typing
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentProduct, setCurrentProduct] = useState(getEmptyProduct());
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    fetchInventory();
-  }, []);
-
-  const fetchInventory = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}?action=getInventory`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setProducts(data);
-      } else {
-        console.error("Server returned non-array:", data);
-      }
-    } catch (e) {
-      console.error("Error fetching inventory", e);
-    }
-    setLoading(false);
-  };
 
   function getEmptyProduct() {
     return {
@@ -90,7 +67,14 @@ const InventoryPage = () => {
     };
   }
 
-  // --- CRUD HANDLERS ---
+  // ⚡️ DEBOUNCE EFFECT: Wait 300ms after user stops typing to filter
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300); // 300ms delay
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
   const handleAddNew = () => {
     setCurrentProduct(getEmptyProduct());
     setEditMode(false);
@@ -98,7 +82,6 @@ const InventoryPage = () => {
   };
 
   const handleEdit = (product) => {
-    // Create a copy to avoid reference issues
     setCurrentProduct({ ...product });
     setEditMode(true);
     setIsModalOpen(true);
@@ -106,81 +89,41 @@ const InventoryPage = () => {
 
   const handleDelete = async (realRowIndex) => {
     if (!window.confirm("Delete this product?")) return;
-
-    // Optimistic Update
-    setProducts((prev) => prev.filter((p) => p.realRowIndex !== realRowIndex));
-
-    try {
-      await fetch(API_URL, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "deleteProduct",
-          realRowIndex: realRowIndex,
-        }),
-      });
-      // Background refresh to ensure sync
-      fetchInventory();
-    } catch (e) {
-      alert("Failed to delete from server");
-    }
+    deleteProduct(realRowIndex);
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
-
-    const action = editMode ? "updateProduct" : "addProduct";
-
-    // Optimistic UI Update
-    if (editMode) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.realRowIndex === currentProduct.realRowIndex ? currentProduct : p,
-        ),
-      );
-    } else {
-      // Add temp product with timestamp ID so it shows up immediately
-      setProducts((prev) => [
-        ...prev,
-        { ...currentProduct, id: "TEMP", stock: Number(currentProduct.stock) },
-      ]);
-    }
-
-    try {
-      await fetch(API_URL, {
-        method: "POST",
-        body: JSON.stringify({ action: action, product: currentProduct }),
-      });
-
-      setIsModalOpen(false);
-      setSaving(false);
-      fetchInventory(); // Get fresh data (real IDs) from server
-    } catch (e) {
-      alert("Error saving product");
-      setSaving(false);
-    }
+    if (editMode) await updateProduct(currentProduct);
+    else await addProduct(currentProduct);
+    setSaving(false);
+    setIsModalOpen(false);
   };
 
-  // --- FILTERING ---
+  // ⚡️ OPTIMIZED FILTERING
   const filteredProducts = useMemo(() => {
-    if (!searchTerm) return products;
-    const lowerTerm = searchTerm.toLowerCase();
-    return products.filter(
+    if (!debouncedSearch) return inventory; // Return full list if search is empty
+
+    const lowerTerm = debouncedSearch.toLowerCase();
+
+    // Only search common fields for speed
+    return inventory.filter(
       (p) =>
         (p.item && p.item.toLowerCase().includes(lowerTerm)) ||
         (p.brand && p.brand.toLowerCase().includes(lowerTerm)) ||
         (p.model && p.model.toLowerCase().includes(lowerTerm)),
     );
-  }, [products, searchTerm]);
+  }, [inventory, debouncedSearch]);
 
-  const displayProducts = searchTerm
-    ? filteredProducts
-    : filteredProducts.slice(0, 50);
+  // ⚡️ LIMIT RENDER: Never show more than 50 rows (Instant Speed)
+  // Even if user types "A" (matching 1000 items), we only show top 50.
+  const displayProducts = filteredProducts.slice(0, 50);
 
   return (
     <div className="flex flex-col h-full bg-gray-50 font-sans">
       {/* HEADER */}
-      <div className="bg-white p-4 shadow-sm z-10 sticky top-0 border-b">
+      <div className="bg-white p-4 shadow-sm z-10 sticky top-0 border-b shrink-0">
         <div className="flex justify-between items-center mb-3">
           <h1 className="text-xl font-bold text-blue-900 flex items-center gap-2">
             <Package className="text-blue-600" /> Product List
@@ -206,14 +149,14 @@ const InventoryPage = () => {
             className="w-full bg-gray-100 p-2.5 pl-10 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium transition-all"
             placeholder="Search by Name, Brand, or Model..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => setSearchTerm(e.target.value)} // Updates input instantly
           />
         </div>
       </div>
 
       {/* CONTENT AREA */}
       <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-24">
-        {!loading && products.length === 0 && (
+        {!loading && inventory.length === 0 && (
           <div className="flex flex-col items-center justify-center mt-20 text-gray-400">
             <Package size={48} className="mb-2 opacity-20" />
             <p>No products found</p>
@@ -399,22 +342,6 @@ const InventoryPage = () => {
                     </span>
                   </div>
                 )}
-                <div className="border-t border-gray-200 my-1"></div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">Buy:</span>
-                  <span className="font-semibold text-gray-700">
-                    ₹{p.purchasePrice || "-"}{" "}
-                    <span className="text-gray-400 font-normal">
-                      /{p.purchaseUnit}
-                    </span>
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">Party:</span>
-                  <span className="font-semibold text-gray-700 truncate max-w-[150px]">
-                    {p.party || "-"}
-                  </span>
-                </div>
               </div>
 
               <div className="flex gap-2">
@@ -436,7 +363,7 @@ const InventoryPage = () => {
         </div>
       </div>
 
-      {/* ✏️ ADD / EDIT MODAL */}
+      {/* ✏️ ADD / EDIT MODAL (Unchanged) */}
       {isModalOpen && currentProduct && (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-end md:items-center justify-center p-0 md:p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full md:max-w-2xl rounded-t-2xl md:rounded-xl shadow-2xl overflow-hidden flex flex-col h-[90vh] md:h-auto md:max-h-[90vh]">
@@ -457,7 +384,6 @@ const InventoryPage = () => {
               onSubmit={handleSave}
               className="p-4 md:p-6 overflow-y-auto flex-1 space-y-4 bg-white"
             >
-              {/* Section 1: Basic Info */}
               <div className="space-y-3">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b pb-1">
                   Basic Details
@@ -515,7 +441,6 @@ const InventoryPage = () => {
                 </div>
               </div>
 
-              {/* Section 2: Pricing & Stock */}
               <div className="space-y-3">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b pb-1">
                   Pricing & Stock
@@ -617,7 +542,6 @@ const InventoryPage = () => {
                 </div>
               </div>
 
-              {/* Spacer for mobile safe area */}
               <div className="h-20 md:hidden"></div>
             </form>
 
@@ -647,5 +571,4 @@ const InventoryPage = () => {
     </div>
   );
 };
-
 export default InventoryPage;

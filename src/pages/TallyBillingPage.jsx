@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useContext } from "react"; // Added useContext
 import {
   Save,
   Trash2,
@@ -10,23 +10,21 @@ import {
   X,
   Minus,
 } from "lucide-react";
-import { pdf } from "@react-pdf/renderer";
+// import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "./InvoicePDF";
-import { useNavigate, useLocation } from "react-router-dom"; // Import useLocation
+import { DataContext } from "../context/DataContext"; // Import Context
 
-// 🔴 PASTE YOUR GOOGLE SCRIPT URL HERE
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbxEyFNimLW1HMuafE8vzIDbUD_D2cYho4AgSkQHmaMbCYSIcXCYiv2yhsD9ygBapqOE/exec";
+const TallyBillingPage = ({ editData, onEditComplete }) => {
+  const {
+    inventory,
+    saveBill,
+    refreshData,
+    loading: appLoading,
+  } = useContext(DataContext); // Use Context
 
-const TallyBillingPage = () => {
-  const navigate = useNavigate();
-  const location = useLocation(); // Hook to get data from history page
-
-  // --- STATE ---
-  const [inventory, setInventory] = useState([]);
+  // Local State
   const [rows, setRows] = useState([getEmptyRow()]);
-  const [loading, setLoading] = useState(false);
-  const [stockLoading, setStockLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // Saving state
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileSearchTerm, setMobileSearchTerm] = useState("");
 
@@ -49,23 +47,13 @@ const TallyBillingPage = () => {
 
   // --- INIT & EDIT CHECK ---
   useEffect(() => {
-    fetchStock();
-
-    // Check if we arrived here via "Edit" button
-    if (
-      location.state &&
-      location.state.mode === "edit" &&
-      location.state.billData
-    ) {
-      const b = location.state.billData;
-
-      // Parse Date correctly (Handle "2026-02-17T00..." format)
+    if (editData) {
+      const b = editData;
       let formattedDate = new Date().toISOString().split("T")[0];
-      if (b.date) {
+      if (b.date)
         try {
           formattedDate = new Date(b.date).toISOString().split("T")[0];
         } catch (e) {}
-      }
 
       setBillMeta({
         billNo: b.billNo,
@@ -78,15 +66,14 @@ const TallyBillingPage = () => {
         const items = JSON.parse(b.items);
         setRows(items);
       } catch (e) {
-        console.error("Error parsing items for edit", e);
+        console.error("Error parsing items", e);
       }
 
-      // Clear history so refresh doesn't keep reloading edit mode
-      window.history.replaceState({}, document.title);
+      if (onEditComplete) onEditComplete(); // Tell App.js we are done
     }
-  }, [location]);
+  }, [editData]);
 
-  // Auto-scroll suggestion list
+  // Scroll logic for suggestions
   useEffect(() => {
     if (
       suggestions.visible &&
@@ -98,24 +85,6 @@ const TallyBillingPage = () => {
       });
     }
   }, [suggestions.highlightIndex, suggestions.visible]);
-
-  const fetchStock = async () => {
-    setStockLoading(true);
-    try {
-      const res = await fetch(`${API_URL}?action=getInventory`);
-      const data = await res.json();
-      const processedData = data.map((prod) => ({
-        ...prod,
-        item: [prod.item, prod.brand, prod.size, prod.model, prod.color]
-          .filter((p) => p && p.toString().trim() !== "")
-          .join(" "),
-      }));
-      setInventory(processedData);
-    } catch (e) {
-      console.error(e);
-    }
-    setStockLoading(false);
-  };
 
   function getEmptyRow() {
     return {
@@ -150,6 +119,7 @@ const TallyBillingPage = () => {
           highlightIndex: 0,
         });
       } else {
+        // Use inventory from Context
         const matches = inventory
           .filter((p) => p.item.toLowerCase().includes(value.toLowerCase()))
           .slice(0, 50);
@@ -295,49 +265,58 @@ const TallyBillingPage = () => {
 
   const handleConfirm = async () => {
     if (!billMeta.customerName) return alert("Customer Name Required");
+
     const validItems = rows.filter((r) => r.item && r.qty > 0);
     if (validItems.length === 0) return alert("Cart is empty");
+
     if (!window.confirm(`Confirm Bill for ₹${grandTotal}?`)) return;
+
     setLoading(true);
     try {
-      await fetch(API_URL, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "confirmBill",
-          billId: billMeta.billNo,
-          date: billMeta.date, // Sending Date to Script
-          customerName: billMeta.customerName,
-          mobile: billMeta.mobile,
-          total: grandTotal,
-          items: validItems,
-        }),
+      // 1. Save Data (Instant via Context)
+      const success = await saveBill({
+        action: "confirmBill",
+        billId: billMeta.billNo,
+        date: billMeta.date,
+        customerName: billMeta.customerName,
+        mobile: billMeta.mobile,
+        total: grandTotal,
+        items: validItems,
       });
-      const blob = await pdf(
-        <InvoicePDF
-          billId={billMeta.billNo}
-          customerName={billMeta.customerName}
-          customerMobile={billMeta.mobile}
-          items={validItems}
-          total={grandTotal}
-          type="Confirmed"
-        />,
-      ).toBlob();
-      window.open(URL.createObjectURL(blob), "_blank");
 
-      // Reset Logic
-      setRows([getEmptyRow()]);
-      setBillMeta({
-        ...billMeta,
-        customerName: "",
-        mobile: "",
-        billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-      });
-      fetchStock();
+      if (success) {
+        // 2. ⚡️ LAZY LOAD PDF LIBRARY (Fixes the error & keeps app fast)
+        const { pdf } = await import("@react-pdf/renderer");
 
-      // Optional: Go back to history if needed
-      // navigate('/history');
+        // 3. Generate PDF
+        const blob = await pdf(
+          <InvoicePDF
+            billId={billMeta.billNo}
+            customerName={billMeta.customerName}
+            customerMobile={billMeta.mobile}
+            items={validItems}
+            total={grandTotal}
+            type="Confirmed"
+          />,
+        ).toBlob();
+
+        // 4. Open PDF
+        window.open(URL.createObjectURL(blob), "_blank");
+
+        // 5. Reset Form
+        setRows([getEmptyRow()]);
+        setBillMeta({
+          ...billMeta,
+          customerName: "",
+          mobile: "",
+          billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+        });
+      } else {
+        alert("Error saving bill");
+      }
     } catch (e) {
-      alert("Error saving bill");
+      console.error(e);
+      alert("Error generating bill");
     }
     setLoading(false);
   };
@@ -357,7 +336,7 @@ const TallyBillingPage = () => {
 
   return (
     <div className="flex flex-col h-full w-full bg-gray-50 font-sans text-sm overflow-hidden relative">
-      {/* 💻 DESKTOP HEADER */}
+      {/* DESKTOP HEADER */}
       <div className="hidden md:flex bg-blue-900 text-white p-3 shadow-md shrink-0 w-full z-40 justify-between items-center">
         <div className="flex items-center gap-6">
           <div className="flex flex-col">
@@ -393,7 +372,7 @@ const TallyBillingPage = () => {
               Stock Status
             </span>
             <div className="flex items-center gap-2 text-xs font-medium">
-              {stockLoading ? (
+              {appLoading ? (
                 <span className="text-yellow-300 animate-pulse">
                   Syncing...
                 </span>
@@ -403,12 +382,12 @@ const TallyBillingPage = () => {
                 </span>
               )}
               <button
-                onClick={fetchStock}
+                onClick={refreshData}
                 className="hover:bg-blue-800 p-1 rounded-full"
               >
                 <RefreshCw
                   size={14}
-                  className={stockLoading ? "animate-spin" : "opacity-70"}
+                  className={appLoading ? "animate-spin" : "opacity-70"}
                 />
               </button>
             </div>
@@ -439,7 +418,7 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* 📱 MOBILE HEADER */}
+      {/* MOBILE HEADER */}
       <div className="md:hidden bg-blue-900 text-white shadow-md shrink-0 w-full z-40">
         <div className="flex justify-between items-center px-3 py-2 border-b border-blue-800">
           <div className="flex items-center gap-2 w-full">
@@ -461,7 +440,7 @@ const TallyBillingPage = () => {
             />
           </div>
           <div>
-            {stockLoading && (
+            {appLoading && (
               <RefreshCw size={12} className="animate-spin text-blue-300" />
             )}
           </div>
@@ -493,7 +472,7 @@ const TallyBillingPage = () => {
         </div>
       </div>
 
-      {/* 📱 MOBILE CONTENT */}
+      {/* MOBILE CONTENT */}
       <div className="flex-1 md:hidden overflow-y-auto p-3 space-y-3 pb-24 bg-gray-50">
         {rows.map((row, index) => {
           if (!row.item) return null;
@@ -589,9 +568,7 @@ const TallyBillingPage = () => {
             </div>
           );
         })}
-
         <div ref={mobileBottomRef} className="h-4" />
-
         <button
           onClick={() => setMobileSearchOpen(true)}
           className="fixed bottom-44 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg shadow-blue-200 active:scale-90 transition z-50"
@@ -600,7 +577,7 @@ const TallyBillingPage = () => {
         </button>
       </div>
 
-      {/* 📱 MOBILE SEARCH OVERLAY */}
+      {/* MOBILE SEARCH OVERLAY */}
       {mobileSearchOpen && (
         <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-200">
           <div className="p-4 border-b flex gap-3 items-center bg-white shadow-sm">
@@ -641,7 +618,7 @@ const TallyBillingPage = () => {
         </div>
       )}
 
-      {/* 💻 DESKTOP GRID */}
+      {/* DESKTOP GRID */}
       <div className="hidden md:flex flex-1 w-full overflow-hidden flex-col relative bg-white">
         <div className="overflow-auto w-full h-full">
           <div className="w-full flex flex-col">
@@ -818,5 +795,4 @@ const TallyBillingPage = () => {
     </div>
   );
 };
-
 export default TallyBillingPage;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useContext } from "react";
 import {
   Search,
   Trash2,
@@ -7,61 +7,34 @@ import {
   Edit,
   FileText,
 } from "lucide-react";
-import { pdf } from "@react-pdf/renderer";
+// import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "./InvoicePDF";
-import { useNavigate } from "react-router-dom";
+import { DataContext } from "../context/DataContext"; // Import Context
 
-// 🔴 PASTE YOUR GOOGLE SCRIPT URL HERE
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbxEyFNimLW1HMuafE8vzIDbUD_D2cYho4AgSkQHmaMbCYSIcXCYiv2yhsD9ygBapqOE/exec";
+const BillHistoryPage = ({ onEditRequest }) => {
+  // Use Context
+  const { bills, deleteBill, loading } = useContext(DataContext);
 
-const BillHistoryPage = () => {
-  const navigate = useNavigate();
-  const [bills, setBills] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [deletingId, setDeletingId] = useState(null);
 
-  useEffect(() => {
-    fetchBills();
-  }, []);
-
-  const fetchBills = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}?action=getBills`);
-      const data = await res.json();
-      setBills(data);
-    } catch (e) {
-      console.error("Error fetching bills", e);
-    }
-    setLoading(false);
+  const handleDelete = async (billId) => {
+    // Context handles the confirm and logic
+    setDeletingId(billId);
+    await deleteBill(billId);
+    setDeletingId(null);
   };
 
   const handleEdit = (bill) => {
-    // Navigate to Home Page and pass the bill data
-    navigate("/", { state: { mode: "edit", billData: bill } });
-  };
-
-  const handleDelete = async (billId) => {
-    if (!window.confirm(`Are you sure you want to delete Bill ${billId}?`))
-      return;
-
-    setDeletingId(billId);
-    try {
-      await fetch(API_URL, {
-        method: "POST",
-        body: JSON.stringify({ action: "deleteBill", billId: billId }),
-      });
-      setBills(bills.filter((b) => b.billNo !== billId));
-    } catch (e) {
-      alert("Failed to delete");
+    // Pass the request up to App.js to switch tabs
+    if (onEditRequest) {
+      onEditRequest(bill);
     }
-    setDeletingId(null);
   };
 
   const handleReprint = async (bill) => {
     try {
+      const { pdf } = await import("@react-pdf/renderer");
       const items = JSON.parse(bill.items);
       const blob = await pdf(
         <InvoicePDF
@@ -92,13 +65,15 @@ const BillHistoryPage = () => {
       {/* HEADER */}
       <div className="bg-white p-4 shadow-sm z-10 sticky top-0 border-b">
         <div className="flex justify-between items-center mb-3">
-          <h1 className="text-xl font-bold text-blue-900">Bill History</h1>
-          <button
-            onClick={fetchBills}
-            className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"
-          >
-            <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-          </button>
+          <h1 className="text-xl font-bold text-blue-900 flex items-center gap-2">
+            Bill History
+            {loading && (
+              <RefreshCw
+                size={16}
+                className="animate-spin text-gray-400 ml-2"
+              />
+            )}
+          </h1>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-3 text-gray-400" size={18} />
@@ -112,10 +87,11 @@ const BillHistoryPage = () => {
       </div>
 
       {/* CONTENT */}
-      <div className="flex-1 overflow-y-auto p-3 md:p-6">
-        {loading && bills.length === 0 && (
-          <div className="text-center text-gray-400 mt-10">
-            Loading history...
+      <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-24">
+        {!loading && bills.length === 0 && (
+          <div className="text-center text-gray-400 mt-10 p-4">
+            <FileText size={40} className="mx-auto mb-2 opacity-20" />
+            <p>No bills found</p>
           </div>
         )}
 
@@ -178,7 +154,7 @@ const BillHistoryPage = () => {
         </div>
 
         {/* 📱 MOBILE CARDS */}
-        <div className="md:hidden space-y-3 pb-24">
+        <div className="md:hidden space-y-3">
           {filteredBills.map((bill) => (
             <div
               key={bill.billNo}
@@ -223,21 +199,14 @@ const BillHistoryPage = () => {
                   disabled={deletingId === bill.billNo}
                   className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-red-50 text-red-600 font-bold text-xs active:scale-95 transition"
                 >
-                  <Trash2 size={16} /> Delete
+                  <Trash2 size={16} /> Del
                 </button>
               </div>
             </div>
           ))}
-          {filteredBills.length === 0 && !loading && (
-            <div className="text-center text-gray-400 mt-10 p-4">
-              <FileText size={40} className="mx-auto mb-2 opacity-20" />
-              <p>No bills found</p>
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 };
-
 export default BillHistoryPage;
