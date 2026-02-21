@@ -1,148 +1,91 @@
-import React, { useState, useCallback, memo } from "react";
-import { BrowserRouter as Router } from "react-router-dom";
-import { Package, History, PlusSquare } from "lucide-react";
-import { DataProvider } from "./context/DataContext";
-
+import React, { useState } from "react";
+import { PlusSquare, Package, History } from "lucide-react";
 import TallyBillingPage from "./pages/TallyBillingPage";
-import InventoryPage from "./pages/InventoryPage";
-import BillHistoryPage from "./pages/BillHistoryPage";
 
-// --- ⚡️ MEMOIZED COMPONENTS (Prevents Lag) ---
-// This tells React: "Don't re-render these pages unless their PROPS change"
-const MemoizedBilling = memo(TallyBillingPage);
-const MemoizedInventory = memo(InventoryPage);
-const MemoizedHistory = memo(BillHistoryPage);
+// Refined placeholder components for empty states
+const InventoryPage = () => (
+  <div className="h-full flex items-center justify-center text-gray-500 font-medium">
+    <div className="flex flex-col items-center gap-2">
+      <Package size={48} className="text-gray-300" />
+      <p>Product List Coming Soon...</p>
+    </div>
+  </div>
+);
+
+const BillHistoryPage = () => (
+  <div className="h-full flex items-center justify-center text-gray-500 font-medium">
+    <div className="flex flex-col items-center gap-2">
+      <History size={48} className="text-gray-300" />
+      <p>Bill History Coming Soon...</p>
+    </div>
+  </div>
+);
 
 const App = () => {
+  // State to track which tab is currently active
   const [activeTab, setActiveTab] = useState("billing");
-  const [billToEdit, setBillToEdit] = useState(null);
-
-  // ⚡️ STABLE CALLBACK (Prevents History Tab from re-rendering unnecessarily)
-  const handleEditBill = useCallback((billData) => {
-    setBillToEdit(billData);
-    setActiveTab("billing");
-  }, []);
-
-  const clearEditData = useCallback(() => {
-    setBillToEdit(null);
-  }, []);
 
   return (
-    <DataProvider>
-      <Router>
-        <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden">
-          {/* DESKTOP HEADER */}
-          <header className="hidden md:flex items-center justify-between bg-blue-900 text-white px-6 py-0 shadow-lg shrink-0 z-50 h-14">
-            <div className="flex items-center gap-2">
-              <div className="bg-white text-blue-900 font-bold p-1 rounded text-xs">
-                GE
-              </div>
-              <h1 className="font-bold tracking-wide text-lg">
-                Gouri Electricals
-              </h1>
-            </div>
-            <nav className="flex h-full">
-              <TabButton
-                isActive={activeTab === "billing"}
-                onClick={() => setActiveTab("billing")}
-                icon={<PlusSquare size={18} />}
-                text="Create Bill"
-              />
-              <TabButton
-                isActive={activeTab === "inventory"}
-                onClick={() => setActiveTab("inventory")}
-                icon={<Package size={18} />}
-                text="Product List"
-              />
-              <TabButton
-                isActive={activeTab === "history"}
-                onClick={() => setActiveTab("history")}
-                icon={<History size={18} />}
-                text="Bill History"
-              />
-            </nav>
-          </header>
-
-          {/* MAIN CONTENT (Keep-Alive with Memoization) */}
-          <main className="flex-1 overflow-hidden relative w-full bg-gray-50">
-            {/* BILLING TAB */}
-            <div
-              style={{
-                display: activeTab === "billing" ? "block" : "none",
-                height: "100%",
-              }}
-            >
-              <MemoizedBilling
-                editData={billToEdit}
-                onEditComplete={clearEditData}
-              />
-            </div>
-
-            {/* INVENTORY TAB */}
-            <div
-              style={{
-                display: activeTab === "inventory" ? "block" : "none",
-                height: "100%",
-              }}
-            >
-              {/* Inventory has no props, so it will NEVER re-render on tab switch now */}
-              <MemoizedInventory />
-            </div>
-
-            {/* HISTORY TAB */}
-            <div
-              style={{
-                display: activeTab === "history" ? "block" : "none",
-                height: "100%",
-              }}
-            >
-              <MemoizedHistory onEditRequest={handleEditBill} />
-            </div>
-          </main>
-
-          {/* MOBILE NAV */}
-          <nav className="md:hidden flex justify-around items-center bg-white border-t border-gray-200 py-2 shadow-[0_-5px_15px_rgba(0,0,0,0.05)] shrink-0 z-50 safe-area-pb">
-            <MobileTabButton
-              isActive={activeTab === "billing"}
-              onClick={() => setActiveTab("billing")}
-              icon={<PlusSquare size={24} />}
-              text="New Bill"
-            />
-            <MobileTabButton
-              isActive={activeTab === "inventory"}
-              onClick={() => setActiveTab("inventory")}
-              icon={<Package size={24} />}
-              text="Products"
-            />
-            <MobileTabButton
-              isActive={activeTab === "history"}
-              onClick={() => setActiveTab("history")}
-              icon={<History size={24} />}
-              text="History"
-            />
-          </nav>
+    // 'h-screen' strictly locks the app to the exact height of the browser window
+    <div className="flex flex-col font-sans h-screen w-full bg-gray-50">
+      {/* HEADER: Increased height to h-14 (56px) for a more premium software feel */}
+      <header className="flex items-center bg-[#1e3a8a] text-white h-14 justify-between shadow-md z-20">
+        {/* Brand/Logo Area */}
+        <div className="flex items-center gap-3 px-6">
+          <div className="bg-white text-[#1e3a8a] font-black px-2 py-1 rounded-md text-sm tracking-widest shadow-sm">
+            GE
+          </div>
+          <h1 className="font-bold tracking-wider text-lg">
+            Gouri Electricals
+          </h1>
         </div>
-      </Router>
-    </DataProvider>
+
+        {/* Tab Navigation */}
+        <nav className="flex h-full">
+          <button
+            onClick={() => setActiveTab("billing")}
+            className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 text-[13px] tracking-wide ${
+              activeTab === "billing"
+                ? "border-yellow-400 bg-[#1e40af] font-bold text-white"
+                : "border-transparent hover:bg-[#1e40af] text-blue-100 font-medium"
+            }`}
+          >
+            <PlusSquare size={16} /> Create Bill
+          </button>
+
+          <button
+            onClick={() => setActiveTab("inventory")}
+            className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 text-[13px] tracking-wide ${
+              activeTab === "inventory"
+                ? "border-yellow-400 bg-[#1e40af] font-bold text-white"
+                : "border-transparent hover:bg-[#1e40af] text-blue-100 font-medium"
+            }`}
+          >
+            <Package size={16} /> Product List
+          </button>
+
+          <button
+            onClick={() => setActiveTab("history")}
+            className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 text-[13px] tracking-wide ${
+              activeTab === "history"
+                ? "border-yellow-400 bg-[#1e40af] font-bold text-white"
+                : "border-transparent hover:bg-[#1e40af] text-blue-100 font-medium"
+            }`}
+          >
+            <History size={16} /> Bill History
+          </button>
+        </nav>
+      </header>
+
+      {/* MAIN CONTENT: 'flex-1' perfectly fills the remaining space under the header */}
+
+      <main className="flex-1 overflow-y-auto relative w-full bg-gray-50">
+        {activeTab === "billing" && <TallyBillingPage />}
+        {activeTab === "inventory" && <InventoryPage />}
+        {activeTab === "history" && <BillHistoryPage />}
+      </main>
+    </div>
   );
 };
-
-// Helpers
-const TabButton = ({ isActive, onClick, icon, text }) => (
-  <button
-    onClick={onClick}
-    className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 ${isActive ? "border-yellow-400 bg-blue-800 text-white font-bold" : "border-transparent text-blue-200 hover:bg-blue-800 hover:text-white"}`}
-  >
-    {icon} <span>{text}</span>
-  </button>
-);
-const MobileTabButton = ({ isActive, onClick, icon, text }) => (
-  <button
-    onClick={onClick}
-    className={`flex flex-col items-center gap-1 p-2 w-full transition-colors ${isActive ? "text-blue-600 font-bold" : "text-gray-400"}`}
-  >
-    {icon} <span className="text-[10px]">{text}</span>
-  </button>
-);
 
 export default App;

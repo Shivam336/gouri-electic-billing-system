@@ -1,793 +1,408 @@
-import React, { useState, useEffect, useRef, useContext } from "react"; // Added useContext
-import {
-  Save,
-  Trash2,
-  Plus,
-  User,
-  Phone,
-  RefreshCw,
-  Search,
-  X,
-  Minus,
-} from "lucide-react";
-// import { pdf } from "@react-pdf/renderer";
-import InvoicePDF from "./InvoicePDF";
-import { DataContext } from "../context/DataContext"; // Import Context
+import React, { useState } from "react";
+import { Trash2, Plus } from "lucide-react";
 
-const TallyBillingPage = ({ editData, onEditComplete }) => {
-  const {
-    inventory,
-    saveBill,
-    refreshData,
-    loading: appLoading,
-  } = useContext(DataContext); // Use Context
-
-  // Local State
-  const [rows, setRows] = useState([getEmptyRow()]);
-  const [loading, setLoading] = useState(false); // Saving state
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [mobileSearchTerm, setMobileSearchTerm] = useState("");
-
-  const [billMeta, setBillMeta] = useState({
-    billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-    date: new Date().toISOString().split("T")[0],
-    customerName: "",
-    mobile: "",
-  });
-
-  const [suggestions, setSuggestions] = useState({
-    visible: false,
-    rowIndex: -1,
-    list: [],
-    highlightIndex: 0,
-  });
-  const gridRefs = useRef({});
-  const suggestionRefs = useRef([]);
-  const mobileBottomRef = useRef(null);
-
-  // --- INIT & EDIT CHECK ---
-  useEffect(() => {
-    if (editData) {
-      const b = editData;
-      let formattedDate = new Date().toISOString().split("T")[0];
-      if (b.date)
-        try {
-          formattedDate = new Date(b.date).toISOString().split("T")[0];
-        } catch (e) {}
-
-      setBillMeta({
-        billNo: b.billNo,
-        date: formattedDate,
-        customerName: b.customerName,
-        mobile: b.mobile,
-      });
-
-      try {
-        const items = JSON.parse(b.items);
-        setRows(items);
-      } catch (e) {
-        console.error("Error parsing items", e);
-      }
-
-      if (onEditComplete) onEditComplete(); // Tell App.js we are done
-    }
-  }, [editData]);
-
-  // Scroll logic for suggestions
-  useEffect(() => {
-    if (
-      suggestions.visible &&
-      suggestionRefs.current[suggestions.highlightIndex]
-    ) {
-      suggestionRefs.current[suggestions.highlightIndex].scrollIntoView({
-        behavior: "auto",
-        block: "nearest",
-      });
-    }
-  }, [suggestions.highlightIndex, suggestions.visible]);
-
-  function getEmptyRow() {
-    return {
-      id: Date.now() + Math.random(),
-      item: "",
-      brand: "",
-      realRowIndex: -1,
-      stock: 0,
-      qty: "",
-      unit: "",
-      price: "",
-      amount: 0,
-    };
-  }
-
-  // --- HANDLERS ---
-  const handleInputChange = (index, field, value) => {
-    const newRows = [...rows];
-    newRows[index][field] = value;
-    if (field === "qty" || field === "price") {
-      newRows[index].amount =
-        (parseFloat(newRows[index].qty) || 0) *
-        (parseFloat(newRows[index].price) || 0);
-    }
-
-    if (field === "item") {
-      if (value.trim() === "") {
-        setSuggestions({
-          visible: false,
-          rowIndex: -1,
-          list: [],
-          highlightIndex: 0,
-        });
-      } else {
-        // Use inventory from Context
-        const matches = inventory
-          .filter((p) => p.item.toLowerCase().includes(value.toLowerCase()))
-          .slice(0, 50);
-        setSuggestions({
-          visible: true,
-          rowIndex: index,
-          list: matches,
-          highlightIndex: 0,
-        });
-      }
-    }
-    setRows(newRows);
-  };
-
-  const selectItem = (rowIndex, product) => {
-    const newRows = [...rows];
-    if (!newRows[rowIndex]) newRows[rowIndex] = getEmptyRow();
-
-    newRows[rowIndex] = {
-      ...newRows[rowIndex],
-      item: product.item,
-      brand: product.brand,
-      realRowIndex: product.realRowIndex,
-      stock: product.stock,
-      unit: product.unit1,
-      price: product.price1,
-      unit1: product.unit1,
-      price1: product.price1,
-      unit2: product.unit2,
-      price2: product.price2,
-      amount: (parseFloat(product.price1) || 0) * 1,
-      qty: 1,
-    };
-    setRows(newRows);
-    setSuggestions({
-      visible: false,
-      rowIndex: -1,
-      list: [],
-      highlightIndex: 0,
-    });
-    setTimeout(() => focusCell(rowIndex, "qty"), 50);
-  };
-
-  const handleMobileAddItem = (product) => {
-    let targetIndex = rows.length - 1;
-    if (rows[targetIndex].item !== "") {
-      setRows((prev) => [...prev, getEmptyRow()]);
-      targetIndex++;
-    }
-    const newRows = [...rows];
-    if (rows[rows.length - 1].item !== "") newRows.push(getEmptyRow());
-
-    newRows[targetIndex] = {
-      ...newRows[targetIndex],
-      id: Date.now(),
-      item: product.item,
-      brand: product.brand,
-      realRowIndex: product.realRowIndex,
-      stock: product.stock,
-      unit: product.unit1,
-      price: product.price1,
-      unit1: product.unit1,
-      price1: product.price1,
-      unit2: product.unit2,
-      price2: product.price2,
-      amount: (parseFloat(product.price1) || 0) * 1,
-      qty: 1,
-    };
-    setRows(newRows);
-    setMobileSearchOpen(false);
-    setMobileSearchTerm("");
-    setTimeout(() => {
-      mobileBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, 100);
-  };
-
-  const handleKeyDown = (e, index, field) => {
-    if (suggestions.visible && suggestions.rowIndex === index) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSuggestions((prev) => ({
-          ...prev,
-          highlightIndex: Math.min(
-            prev.highlightIndex + 1,
-            prev.list.length - 1,
-          ),
-        }));
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSuggestions((prev) => ({
-          ...prev,
-          highlightIndex: Math.max(prev.highlightIndex - 1, 0),
-        }));
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (suggestions.list.length > 0)
-          selectItem(index, suggestions.list[suggestions.highlightIndex]);
-        return;
-      }
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (field === "item") focusCell(index, "qty");
-      else if (field === "qty") focusCell(index, "price");
-      else if (field === "price") {
-        index === rows.length - 1 ? addNewRow() : focusCell(index + 1, "item");
-      }
-    }
-  };
-
-  const handleUnitChange = (index, newUnit) => {
-    const newRows = [...rows];
-    const r = newRows[index];
-    r.unit = newUnit;
-    if (newUnit === r.unit1) r.price = r.price1;
-    else if (newUnit === r.unit2) r.price = r.price2;
-    r.amount = (parseFloat(r.qty) || 0) * (parseFloat(r.price) || 0);
-    setRows(newRows);
-  };
-
-  const addNewRow = () => {
-    setRows((prev) => [...prev, getEmptyRow()]);
-    setTimeout(() => focusCell(rows.length, "item"), 50);
-  };
-  const removeRow = (index) => {
-    if (rows.length <= 1) {
-      setRows([getEmptyRow()]);
-    } else {
-      setRows(rows.filter((_, i) => i !== index));
-    }
-  };
-  const focusCell = (rowIndex, field) => {
-    const el = gridRefs.current[`${rowIndex}-${field}`];
-    if (el) {
-      el.focus();
-      el.select();
-    }
-  };
-
-  const handleConfirm = async () => {
-    if (!billMeta.customerName) return alert("Customer Name Required");
-
-    const validItems = rows.filter((r) => r.item && r.qty > 0);
-    if (validItems.length === 0) return alert("Cart is empty");
-
-    if (!window.confirm(`Confirm Bill for ₹${grandTotal}?`)) return;
-
-    setLoading(true);
-    try {
-      // 1. Save Data (Instant via Context)
-      const success = await saveBill({
-        action: "confirmBill",
-        billId: billMeta.billNo,
-        date: billMeta.date,
-        customerName: billMeta.customerName,
-        mobile: billMeta.mobile,
-        total: grandTotal,
-        items: validItems,
-      });
-
-      if (success) {
-        // 2. ⚡️ LAZY LOAD PDF LIBRARY (Fixes the error & keeps app fast)
-        const { pdf } = await import("@react-pdf/renderer");
-
-        // 3. Generate PDF
-        const blob = await pdf(
-          <InvoicePDF
-            billId={billMeta.billNo}
-            customerName={billMeta.customerName}
-            customerMobile={billMeta.mobile}
-            items={validItems}
-            total={grandTotal}
-            type="Confirmed"
-          />,
-        ).toBlob();
-
-        // 4. Open PDF
-        window.open(URL.createObjectURL(blob), "_blank");
-
-        // 5. Reset Form
-        setRows([getEmptyRow()]);
-        setBillMeta({
-          ...billMeta,
-          customerName: "",
-          mobile: "",
-          billNo: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-        });
-      } else {
-        alert("Error saving bill");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Error generating bill");
-    }
-    setLoading(false);
-  };
-
-  const grandTotal = rows.reduce(
-    (acc, r) => acc + (parseFloat(r.amount) || 0),
-    0,
-  );
-
-  const mobileFilteredInventory = inventory
-    .filter(
-      (p) =>
-        p.item.toLowerCase().includes(mobileSearchTerm.toLowerCase()) ||
-        p.brand.toLowerCase().includes(mobileSearchTerm.toLowerCase()),
-    )
-    .slice(0, 50);
+const TallyBillingPage = () => {
+  // Uniform CSS for all labels and inputs
+  let labelHeadingCSS = "text-[12px] font-semibold text-gray-700 mb-1";
+  let fieldCSS =
+    "px-2 py-1.5 border border-gray-300 rounded-md outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a] font-medium text-gray-900 text-[12px] transition-all";
 
   return (
-    <div className="flex flex-col h-full w-full bg-gray-50 font-sans text-sm overflow-hidden relative">
-      {/* DESKTOP HEADER */}
-      <div className="hidden md:flex bg-blue-900 text-white p-3 shadow-md shrink-0 w-full z-40 justify-between items-center">
-        <div className="flex items-center gap-6">
+    // Added uniform background and padding to the main wrapper
+    <div className="flex flex-col min-h-full p-4 gap-4 w-full">
+      {/* 1. TOP FORM BAR */}
+      <div className="flex flex-col gap-4 p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
+        {/* ROW 1: Basic Bill Info & Customer Details */}
+        <div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col">
-            <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-              Bill No
-            </span>
+            <label className={labelHeadingCSS}>Type</label>
+            <select className={`${fieldCSS} cursor-pointer w-28`}>
+              <option value="SALE">Sale</option>
+              <option value="RETURN">Return</option>
+              <option value="ESTIMATE">Estimate</option>
+              <option value="PAYMENT">Receipt</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col">
+            <label className={labelHeadingCSS}>Bill No.</label>
             <input
-              className="bg-transparent font-bold text-xl leading-none tracking-wide text-white outline-none w-40"
-              value={billMeta.billNo}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, billNo: e.target.value })
-              }
+              type="text"
+              defaultValue="INV-9567"
+              className={`${fieldCSS} w-24 bg-gray-50`}
+              readOnly
             />
           </div>
-          <div className="h-10 w-px bg-blue-700"></div>
+
           <div className="flex flex-col">
-            <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-              Date
-            </span>
+            <label className={labelHeadingCSS}>Date</label>
             <input
               type="date"
-              className="bg-transparent font-bold outline-none text-white text-lg w-36 cursor-pointer"
-              value={billMeta.date}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, date: e.target.value })
-              }
+              defaultValue={new Date().toISOString().split("T")[0]}
+              className={`${fieldCSS} cursor-pointer w-32`}
+            />
+          </div>
+
+          <div className="flex flex-col flex-1 min-w-[200px]">
+            <label className={labelHeadingCSS}>
+              Customer Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              placeholder="Enter name..."
+              className={`${fieldCSS} w-full`}
+            />
+          </div>
+
+          <div className="flex flex-col">
+            <label className={labelHeadingCSS}>
+              Phone No. <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="tel"
+              placeholder="Mobile number..."
+              className={`${fieldCSS} w-32`}
             />
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col items-end mr-4">
-            <span className="text-[10px] text-blue-300 font-bold tracking-wider uppercase">
-              Stock Status
-            </span>
-            <div className="flex items-center gap-2 text-xs font-medium">
-              {appLoading ? (
-                <span className="text-yellow-300 animate-pulse">
-                  Syncing...
-                </span>
-              ) : (
-                <span className="text-green-400 flex items-center gap-1">
-                  ● Live
-                </span>
-              )}
-              <button
-                onClick={refreshData}
-                className="hover:bg-blue-800 p-1 rounded-full"
-              >
-                <RefreshCw
-                  size={14}
-                  className={appLoading ? "animate-spin" : "opacity-70"}
-                />
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 w-64 h-11 px-3">
-            <User className="text-blue-300 shrink-0" size={18} />
+
+        {/* ROW 2: Address & Reference Details */}
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col flex-1 min-w-[200px]">
+            <label className={labelHeadingCSS}>Customer Address</label>
             <input
-              className="bg-transparent p-2 text-white placeholder-blue-300/70 outline-none font-semibold w-full text-sm"
-              placeholder="Customer Name"
-              value={billMeta.customerName}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, customerName: e.target.value })
-              }
+              type="text"
+              placeholder="Enter Address..."
+              className={`${fieldCSS} w-full`}
             />
           </div>
-          <div className="flex items-center bg-blue-800/50 hover:bg-blue-800 transition-colors rounded-lg border border-blue-700/50 w-44 h-11 px-3">
-            <Phone className="text-blue-300 shrink-0" size={18} />
+
+          <div className="flex flex-col">
+            <label className={labelHeadingCSS}>Last Bill No.</label>
+            <select className={`${fieldCSS} cursor-pointer w-32`}>
+              <option value="">Select...</option>
+              <option value="INV-9566">INV-9566</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col flex-1 min-w-[150px]">
+            <label className={labelHeadingCSS}>Ref Name</label>
             <input
-              className="bg-transparent p-2 text-white placeholder-blue-300/70 outline-none font-medium w-full text-sm"
-              placeholder="Mobile"
-              inputMode="numeric"
-              value={billMeta.mobile}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, mobile: e.target.value })
-              }
+              type="text"
+              placeholder="Reference Name..."
+              className={`${fieldCSS} w-full`}
+            />
+          </div>
+
+          <div className="flex flex-col">
+            <label className={labelHeadingCSS}>Ref Phone No.</label>
+            <input
+              type="tel"
+              placeholder="Ref Mobile..."
+              className={`${fieldCSS} w-32`}
             />
           </div>
         </div>
       </div>
+      {/* 2. ITEM ENTRY TABLE */}
+      <div className="w-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
+        <div className="w-full h-[320px] overflow-auto relative">
+          <table className="w-full text-left border-collapse">
+            {/* Softened headers to Title Case */}
+            <thead className="bg-gray-100 text-[12px] font-semibold text-gray-700 sticky top-0 z-10 shadow-sm">
+              <tr>
+                <th className="p-2 w-10 text-center border-b border-r border-gray-300">
+                  #
+                </th>
+                <th className="p-2 w-64 border-b border-r border-gray-300">
+                  Item Description
+                </th>
+                <th className="p-2 w-20 border-b border-r border-gray-300">
+                  HSN
+                </th>
+                <th className="p-2 w-16 border-b border-r border-gray-300">
+                  Stock
+                </th>
+                <th className="p-2 w-16 border-b border-r border-gray-300">
+                  MRP
+                </th>
+                <th className="p-2 w-16 border-b border-r border-gray-300">
+                  Qty
+                </th>
+                <th className="p-2 w-20 border-b border-r border-gray-300">
+                  Unit
+                </th>
+                <th className="p-2 w-24 border-b border-r border-gray-300">
+                  Rate
+                </th>
+                <th className="p-2 w-16 border-b border-r border-gray-300">
+                  Tax %
+                </th>
+                <th className="p-2 w-16 border-b border-r border-gray-300">
+                  Disc %
+                </th>
+                <th className="p-2 w-28 border-b border-r border-gray-300 text-right">
+                  Amount
+                </th>
+                <th className="p-2 w-12 border-b border-gray-300 text-center">
+                  Del
+                </th>
+              </tr>
+            </thead>
 
-      {/* MOBILE HEADER */}
-      <div className="md:hidden bg-blue-900 text-white shadow-md shrink-0 w-full z-40">
-        <div className="flex justify-between items-center px-3 py-2 border-b border-blue-800">
-          <div className="flex items-center gap-2 w-full">
-            <input
-              className="font-mono text-blue-100 text-xs font-bold bg-transparent outline-none w-24"
-              value={billMeta.billNo}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, billNo: e.target.value })
-              }
-            />
-            <span className="text-blue-500 text-[10px]">|</span>
-            <input
-              type="date"
-              className="text-blue-100 text-xs bg-transparent outline-none w-24"
-              value={billMeta.date}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, date: e.target.value })
-              }
-            />
-          </div>
-          <div>
-            {appLoading && (
-              <RefreshCw size={12} className="animate-spin text-blue-300" />
-            )}
-          </div>
-        </div>
-        <div className="flex items-center p-2 gap-2">
-          <div className="flex-1 flex items-center bg-blue-800 rounded px-2 py-1.5 border border-blue-700">
-            <User size={14} className="text-blue-400 mr-2" />
-            <input
-              className="bg-transparent w-full text-sm font-bold placeholder-blue-400 outline-none text-white"
-              placeholder="Customer Name"
-              value={billMeta.customerName}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, customerName: e.target.value })
-              }
-            />
-          </div>
-          <div className="w-1/3 flex items-center bg-blue-800 rounded px-2 py-1.5 border border-blue-700">
-            <Phone size={14} className="text-blue-400 mr-2" />
-            <input
-              className="bg-transparent w-full text-sm placeholder-blue-400 outline-none text-white"
-              placeholder="Mobile"
-              inputMode="numeric"
-              value={billMeta.mobile}
-              onChange={(e) =>
-                setBillMeta({ ...billMeta, mobile: e.target.value })
-              }
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* MOBILE CONTENT */}
-      <div className="flex-1 md:hidden overflow-y-auto p-3 space-y-3 pb-24 bg-gray-50">
-        {rows.map((row, index) => {
-          if (!row.item) return null;
-          return (
-            <div
-              key={row.id}
-              className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <h3 className="font-bold text-gray-800 text-sm leading-tight">
-                    {row.item}
-                  </h3>
-                  <p className="text-[10px] text-gray-400 mt-1">
-                    Stock: {row.stock}
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeRow(index)}
-                  className="text-gray-300 p-1 hover:text-red-500"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center border rounded-lg bg-gray-50 h-9 w-[35%]">
-                  <button
-                    className="px-2 h-full flex items-center justify-center text-gray-500 active:bg-gray-200"
-                    onClick={() =>
-                      handleInputChange(
-                        index,
-                        "qty",
-                        Math.max(1, (parseFloat(row.qty) || 0) - 1),
-                      )
-                    }
-                  >
-                    {" "}
-                    <Minus size={14} />{" "}
-                  </button>
+            <tbody>
+              <tr className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                <td className="p-1 border-r border-gray-200 text-center text-[12px] text-gray-500 font-medium">
+                  1
+                </td>
+                <td className="p-1 border-r border-gray-200">
                   <input
-                    className="w-full text-center bg-transparent font-bold outline-none text-sm"
-                    type="number"
-                    value={row.qty}
-                    onChange={(e) =>
-                      handleInputChange(index, "qty", e.target.value)
-                    }
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 font-medium"
+                    placeholder="Type item..."
                   />
-                  <button
-                    className="px-2 h-full flex items-center justify-center text-gray-500 active:bg-gray-200"
-                    onClick={() =>
-                      handleInputChange(
-                        index,
-                        "qty",
-                        (parseFloat(row.qty) || 0) + 1,
-                      )
-                    }
-                  >
-                    {" "}
-                    <Plus size={14} />{" "}
-                  </button>
-                </div>
-                <div className="relative h-9 w-[25%] border rounded-lg bg-white">
-                  <select
-                    className="w-full h-full px-1 text-[10px] font-bold appearance-none bg-transparent outline-none"
-                    value={row.unit}
-                    onChange={(e) => handleUnitChange(index, e.target.value)}
-                  >
-                    {row.unit1 && (
-                      <option value={row.unit1}>{row.unit1}</option>
-                    )}
-                    {row.unit2 && (
-                      <option value={row.unit2}>{row.unit2}</option>
-                    )}
-                  </select>
-                </div>
-                <div className="h-9 w-[40%] border rounded-lg bg-white flex items-center px-2">
-                  <span className="text-gray-400 text-xs mr-1">₹</span>
+                </td>
+                <td className="p-1 border-r border-gray-200">
                   <input
-                    className="w-full font-bold text-right outline-none text-sm"
-                    type="number"
-                    value={row.price}
-                    onChange={(e) =>
-                      handleInputChange(index, "price", e.target.value)
-                    }
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900"
+                    placeholder="-"
                   />
-                </div>
-              </div>
-              <div className="border-t pt-2 flex justify-end items-center gap-2">
-                <span className="text-lg font-bold text-blue-900">
-                  ₹{(row.amount || 0).toLocaleString()}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-        <div ref={mobileBottomRef} className="h-4" />
-        <button
-          onClick={() => setMobileSearchOpen(true)}
-          className="fixed bottom-44 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg shadow-blue-200 active:scale-90 transition z-50"
-        >
-          <Plus size={24} />
-        </button>
-      </div>
-
-      {/* MOBILE SEARCH OVERLAY */}
-      {mobileSearchOpen && (
-        <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-in slide-in-from-bottom duration-200">
-          <div className="p-4 border-b flex gap-3 items-center bg-white shadow-sm">
-            <Search className="text-gray-400" size={20} />
-            <input
-              autoFocus
-              className="flex-1 text-lg outline-none font-medium"
-              placeholder="Search Item..."
-              value={mobileSearchTerm}
-              onChange={(e) => setMobileSearchTerm(e.target.value)}
-            />
-            <button
-              onClick={() => setMobileSearchOpen(false)}
-              className="bg-gray-100 p-2 rounded-full"
-            >
-              <X size={20} />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2">
-            {mobileFilteredInventory.map((item, i) => (
-              <div
-                key={i}
-                onClick={() => handleMobileAddItem(item)}
-                className="p-4 border-b border-gray-50 active:bg-blue-50 flex justify-between items-center"
-              >
-                <div className="w-[80%]">
-                  <p className="font-bold text-gray-800 text-sm truncate">
-                    {item.item}
-                  </p>
-                  <p className="text-[10px] text-gray-400">{item.brand}</p>
-                </div>
-                <span className="text-xs font-bold bg-green-50 text-green-700 px-2 py-1 rounded border border-green-100">
-                  {item.stock}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* DESKTOP GRID */}
-      <div className="hidden md:flex flex-1 w-full overflow-hidden flex-col relative bg-white">
-        <div className="overflow-auto w-full h-full">
-          <div className="w-full flex flex-col">
-            <div className="flex bg-gray-100 border-b border-gray-300 text-xs font-bold text-gray-700 uppercase sticky top-0 z-30">
-              <div className="w-10 p-3 text-center border-r border-gray-300">
-                #
-              </div>
-              <div className="flex-1 p-3 border-r border-gray-300">
-                Item Description
-              </div>
-              <div className="w-20 p-3 text-right border-r border-gray-300">
-                Stock
-              </div>
-              <div className="w-20 p-3 text-right border-r border-gray-300">
-                Qty
-              </div>
-              <div className="w-24 p-3 border-r border-gray-300">Unit</div>
-              <div className="w-24 p-3 text-right border-r border-gray-300">
-                Rate
-              </div>
-              <div className="w-32 p-3 text-right border-r border-gray-300">
-                Amount
-              </div>
-              <div className="w-12 text-center p-3">Del</div>
-            </div>
-            <div className="pb-24 bg-white min-h-[500px]">
-              {rows.map((row, index) => (
-                <div
-                  key={row.id}
-                  className={`flex border-b border-gray-200 ${index % 2 === 0 ? "bg-white" : "bg-gray-50"}`}
-                >
-                  <div className="w-10 p-2 flex items-center justify-center text-gray-400 border-r text-xs">
-                    {index + 1}
-                  </div>
-                  <div className="flex-1 relative border-r">
-                    <input
-                      ref={(el) => (gridRefs.current[`${index}-item`] = el)}
-                      className="w-full h-full p-3 outline-none bg-transparent font-semibold text-gray-800 uppercase text-sm text-left"
-                      value={row.item}
-                      placeholder={
-                        index === rows.length - 1 ? "Type Item..." : ""
-                      }
-                      onChange={(e) =>
-                        handleInputChange(index, "item", e.target.value)
-                      }
-                      onKeyDown={(e) => handleKeyDown(e, index, "item")}
-                      autoComplete="off"
-                    />
-                    {suggestions.visible && suggestions.rowIndex === index && (
-                      <div className="absolute left-0 top-full w-full bg-white border border-blue-600 shadow-2xl z-50 max-h-[50vh] overflow-y-auto mt-1 rounded-b-lg">
-                        {suggestions.list.map((item, i) => (
-                          <div
-                            key={item.realRowIndex}
-                            ref={(el) => (suggestionRefs.current[i] = el)}
-                            className={`flex justify-start items-center p-2.5 px-4 cursor-pointer border-b border-gray-100 text-left ${i === suggestions.highlightIndex ? "bg-blue-600 text-white" : "text-gray-800 hover:bg-gray-50"}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selectItem(index, item);
-                            }}
-                          >
-                            <span className="font-bold text-sm uppercase truncate flex-1 text-left mr-4">
-                              {item.item}
-                            </span>
-                            <span
-                              className={`text-xs font-mono whitespace-nowrap ${i === suggestions.highlightIndex ? "text-blue-100" : "text-gray-500"}`}
-                            >
-                              Stk: {item.stock}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="w-20 p-2 flex items-center justify-end text-xs text-gray-500 border-r bg-gray-50">
-                    {row.stock}
-                  </div>
-                  <div className="w-20 border-r bg-white">
-                    <input
-                      ref={(el) => (gridRefs.current[`${index}-qty`] = el)}
-                      type="number"
-                      className="w-full h-full p-2 text-right outline-none bg-transparent font-bold text-black focus:bg-yellow-100"
-                      value={row.qty}
-                      onChange={(e) =>
-                        handleInputChange(index, "qty", e.target.value)
-                      }
-                      onKeyDown={(e) => handleKeyDown(e, index, "qty")}
-                    />
-                  </div>
-                  <div className="w-24 border-r bg-white relative">
-                    <select
-                      className="w-full h-full p-2 bg-transparent outline-none text-xs font-bold appearance-none cursor-pointer"
-                      value={row.unit}
-                      onChange={(e) => handleUnitChange(index, e.target.value)}
-                    >
-                      {row.unit1 && (
-                        <option value={row.unit1}>{row.unit1}</option>
-                      )}
-                      {row.unit2 && (
-                        <option value={row.unit2}>{row.unit2}</option>
-                      )}
-                    </select>
-                  </div>
-                  <div className="w-24 border-r bg-white">
-                    <input
-                      ref={(el) => (gridRefs.current[`${index}-price`] = el)}
-                      type="number"
-                      className="w-full h-full p-2 text-right outline-none bg-transparent text-black focus:bg-yellow-100 text-sm font-medium"
-                      value={row.price}
-                      onChange={(e) =>
-                        handleInputChange(index, "price", e.target.value)
-                      }
-                      onKeyDown={(e) => handleKeyDown(e, index, "price")}
-                    />
-                  </div>
-                  <div className="w-32 p-2 flex items-center justify-end font-bold text-gray-900 bg-gray-50 border-r text-sm">
-                    {row.amount ? row.amount.toLocaleString("en-IN") : "-"}
-                  </div>
-                  <div
-                    className="w-12 flex items-center justify-center cursor-pointer text-gray-300 active:text-red-500 active:bg-red-50"
-                    onClick={() => removeRow(index)}
-                  >
+                </td>
+                <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-gray-50 text-center">
+                  150
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    type="number"
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-center"
+                    placeholder="0"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-center"
+                    placeholder="Pcs"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    type="number"
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-right"
+                    placeholder="0.00"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    type="number"
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-center"
+                    placeholder="0"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    type="number"
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-center"
+                    placeholder="0"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    type="number"
+                    className="w-full outline-none bg-transparent px-1 text-[12px] text-gray-900 text-center"
+                    placeholder="0"
+                  />
+                </td>
+                <td className="p-1 border-r border-gray-200">
+                  <input
+                    className="w-full outline-none bg-transparent px-1 text-[12px] font-bold text-gray-900 text-right bg-gray-50"
+                    readOnly
+                    defaultValue="0.00"
+                  />
+                </td>
+                <td className="p-1 text-center">
+                  <button className="text-red-400 hover:text-red-600 transition-colors p-1">
                     <Trash2 size={16} />
-                  </div>
-                </div>
-              ))}
-              <button
-                onClick={addNewRow}
-                className="w-full py-4 text-blue-600 font-bold border-t border-dashed bg-white active:bg-blue-50 text-xs uppercase flex items-center justify-center gap-2"
-              >
-                <Plus size={16} /> Add Row
-              </button>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Added "Add Row" button docked at the bottom of the table */}
+        <div className="p-2 border-t border-gray-200 bg-gray-50 flex justify-start">
+          <button className="text-[#1e3a8a] font-semibold text-[12px] flex items-center gap-1 hover:underline px-2 py-1">
+            <Plus size={14} /> Add Row
+          </button>
+        </div>
+      </div>
+      {/* 3. BOTTOM SECTION: Notes & Financial Engine */}
+      <div className="flex gap-4 mt-auto">
+        {/* Left Side: Remarks & Terms */}
+        <div className="flex-1 flex flex-col gap-4">
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1 flex flex-col">
+            <label className="text-[12px] font-semibold text-gray-700 mb-2 block">
+              Remarks / Warranty Notes
+            </label>
+            <textarea
+              className="w-full flex-1 p-2 border border-gray-300 rounded-md outline-none focus:border-[#1e3a8a] text-[12px] resize-none text-gray-800"
+              placeholder="Enter warranty details, delivery notes, or customer remarks here..."
+            ></textarea>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex gap-6 h-28">
+            <div className="flex-1">
+              <label className="text-[12px] font-semibold text-gray-700 mb-1 block">
+                Terms & Conditions
+              </label>
+              <ul className="text-[11px] text-gray-600 list-disc pl-4 space-y-0.5">
+                <li>Goods once sold will not be taken back.</li>
+                <li>Warranty subject to manufacturer terms.</li>
+                <li>Subject to local jurisdiction.</li>
+              </ul>
+            </div>
+
+            <div className="flex-1 border-l border-gray-200 pl-6">
+              <label className="text-[12px] font-semibold text-gray-700 mb-1 block">
+                Bank / UPI Details
+              </label>
+              <div className="text-[11px] text-gray-600 space-y-1">
+                <p>
+                  <span className="font-semibold text-gray-800">Bank:</span>{" "}
+                  HDFC Bank
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-800">A/C:</span>{" "}
+                  50200012345678
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-800">IFSC:</span>{" "}
+                  HDFC0001234
+                </p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* FOOTER */}
-      <div className="bg-white border-t border-gray-200 p-3 shrink-0 z-40 w-full shadow-[0_-5px_20px_rgba(0,0,0,0.05)] md:shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
-        <div className="flex flex-row justify-between items-center gap-2">
-          <div className="flex flex-col text-xs text-gray-600">
-            <span>
-              Items: <b>{rows.filter((r) => r.amount > 0).length}</b>
-            </span>
-            <span className="hidden md:inline">
-              Qty:{" "}
-              <b>{rows.reduce((s, r) => s + (parseFloat(r.qty) || 0), 0)}</b>
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <span className="text-[10px] text-gray-400 block uppercase">
-                Total
+        {/* Right Side: Financial Ledger */}
+        <div className="w-[400px] bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col shrink-0">
+          <div className="p-4 flex flex-col gap-3 flex-1">
+            <div className="flex justify-between items-center">
+              <span className="text-[12px] font-semibold text-gray-700">
+                Sub Total
               </span>
-              <span className="text-xl font-bold text-blue-900 leading-none">
-                ₹{grandTotal.toLocaleString("en-IN")}
-              </span>
+              <input
+                readOnly
+                defaultValue="0.00"
+                className="w-32 px-2 py-1.5 text-right border border-gray-200 rounded-md bg-gray-50 text-[13px] font-semibold text-gray-900 outline-none"
+              />
             </div>
-            <button
-              onClick={handleConfirm}
-              disabled={loading}
-              className="bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg hover:bg-green-700 disabled:bg-gray-400 font-bold flex items-center gap-2 text-sm uppercase transition-transform active:scale-95"
-            >
-              {loading ? (
-                <RefreshCw className="animate-spin" size={18} />
-              ) : (
-                <Save size={18} />
-              )}
-              <span className="hidden md:inline">Save & Print</span>
-              <span className="md:hidden">Save</span>
+
+            <div className="flex justify-between items-center">
+              <span className="text-[12px] font-semibold text-gray-700">
+                (-) Discount
+              </span>
+              <input
+                type="number"
+                defaultValue="0"
+                className="w-32 px-2 py-1.5 text-right border border-gray-300 rounded-md text-[13px] font-semibold text-[#1e3a8a] outline-none focus:border-[#1e3a8a] transition-colors"
+              />
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-[12px] font-semibold text-gray-700">
+                Current Bill
+              </span>
+              <input
+                readOnly
+                defaultValue="0.00"
+                className="w-32 px-2 py-1.5 text-right border border-gray-200 rounded-md bg-gray-50 text-[13px] font-semibold text-[#1e3a8a] outline-none"
+              />
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-[12px] font-semibold text-gray-700">
+                (+) Previous Balance
+              </span>
+              <input
+                type="number"
+                defaultValue="0"
+                className="w-32 px-2 py-1.5 text-right border border-gray-300 rounded-md text-[13px] font-semibold text-[#1e3a8a] outline-none focus:border-[#1e3a8a] transition-colors"
+              />
+            </div>
+
+            <hr className="my-1 border-gray-200" />
+
+            <div className="flex justify-between items-center bg-blue-50/50 p-2 rounded-md border border-blue-100">
+              <span className="text-[13px] font-bold text-[#1e3a8a]">
+                Grand Total Due
+              </span>
+              <input
+                readOnly
+                defaultValue="0.00"
+                className="w-32 text-right bg-transparent text-lg font-bold text-[#1e3a8a] outline-none"
+              />
+            </div>
+
+            <hr className="my-1 border-gray-200" />
+
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                Payments Received
+              </span>
+
+              <div className="flex justify-between items-center pl-2">
+                <span className="text-[12px] font-medium text-gray-700">
+                  Cash
+                </span>
+                <input
+                  type="number"
+                  defaultValue="0"
+                  className="w-28 px-2 py-1 text-right border border-gray-300 rounded-md text-[12px] font-semibold outline-none focus:border-green-500 transition-colors"
+                />
+              </div>
+
+              <div className="flex justify-between items-center pl-2">
+                <span className="text-[12px] font-medium text-gray-700">
+                  UPI / Bank
+                </span>
+                <input
+                  type="number"
+                  defaultValue="0"
+                  className="w-28 px-2 py-1 text-right border border-gray-300 rounded-md text-[12px] font-semibold outline-none focus:border-green-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            <hr className="my-1 border-gray-200" />
+
+            <div className="flex justify-between items-center">
+              <span className="text-[12px] font-semibold text-gray-700">
+                Total Paid Now
+              </span>
+              <input
+                readOnly
+                defaultValue="0.00"
+                className="w-32 text-right bg-transparent text-[13px] font-bold text-green-700 outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="bg-gray-800 text-white px-5 py-3 flex justify-between items-center">
+            <span className="text-[13px] font-medium tracking-wide">
+              Closing Balance
+            </span>
+            <span className="text-xl font-bold">₹ 0.00</span>
+          </div>
+
+          <div className="p-3 bg-gray-100 flex gap-3 rounded-b-lg border-t border-gray-300">
+            <button className="flex-1 bg-gray-500 hover:bg-gray-600 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95">
+              Reset
+            </button>
+            <button className="flex-1 bg-[#1e3a8a] hover:bg-blue-800 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95">
+              Save
+            </button>
+            <button className="flex-[1.5] bg-green-600 hover:bg-green-700 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95">
+              Save & Print
             </button>
           </div>
         </div>
@@ -795,4 +410,5 @@ const TallyBillingPage = ({ editData, onEditComplete }) => {
     </div>
   );
 };
+
 export default TallyBillingPage;
