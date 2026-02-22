@@ -26,10 +26,11 @@ const App = () => {
   const [activeTab, setActiveTab] = useState("billing");
 
   return (
-    // 'h-screen' strictly locks the app to the exact height of the browser window
-    <div className="flex flex-col font-sans h-screen w-full bg-gray-50">
-      {/* HEADER: Increased height to h-14 (56px) for a more premium software feel */}
-      <header className="flex items-center bg-[#1e3a8a] text-white h-14 justify-between shadow-md z-20">
+    // ADDED: print:h-auto print:bg-white print:block
+    // This stops the browser from treating the A5 paper like a scrollable website
+    <div className="flex flex-col font-sans h-screen w-full bg-gray-50 print:h-auto print:bg-white print:block">
+      {/* HEADER: ADDED print:hidden! This is what was causing the blue bar to print */}
+      <header className="flex items-center bg-[#1e3a8a] text-white h-14 justify-between shadow-md z-20 print:hidden">
         {/* Brand/Logo Area */}
         <div className="flex items-center gap-3 px-6">
           <div className="bg-white text-[#1e3a8a] font-black px-2 py-1 rounded-md text-sm tracking-widest shadow-sm">
@@ -77,9 +78,9 @@ const App = () => {
         </nav>
       </header>
 
-      {/* MAIN CONTENT: 'flex-1' perfectly fills the remaining space under the header */}
-
-      <main className="flex-1 overflow-y-auto relative w-full bg-gray-50">
+      {/* MAIN CONTENT: ADDED print:overflow-visible print:bg-white print:block */}
+      {/* This ensures the hidden A5 print layout can expand safely without getting cut off */}
+      <main className="flex-1 overflow-y-auto relative w-full bg-gray-50 print:overflow-visible print:bg-white print:block">
         {activeTab === "billing" && <TallyBillingPage />}
         {activeTab === "inventory" && <InventoryPage />}
         {activeTab === "history" && <BillHistoryPage />}
