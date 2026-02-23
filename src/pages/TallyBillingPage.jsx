@@ -13,6 +13,12 @@ const TallyBillingPage = () => {
   const [activeUnitRow, setActiveUnitRow] = useState(null);
   const [highlightedUnitIndex, setHighlightedUnitIndex] = useState(0);
 
+  // --- PAYMENT SUMMARY STATES ---
+  const [globalDiscount, setGlobalDiscount] = useState("");
+  const [prevBalance, setPrevBalance] = useState("");
+  const [cashPaid, setCashPaid] = useState("");
+  const [upiPaid, setUpiPaid] = useState("");
+
   useEffect(() => {
     const loadData = async () => {
       const data = await dataContext.storeAndSearchProducts();
@@ -20,7 +26,7 @@ const TallyBillingPage = () => {
     };
 
     loadData();
-  }, []);
+  }, [dataContext]);
 
   const pageRef = useRef(null);
 
@@ -42,6 +48,16 @@ const TallyBillingPage = () => {
   ]);
 
   const [showSavePopup, setShowSavePopup] = useState(false);
+
+  // --- DYNAMIC GLOBAL CALCULATIONS ---
+  const subTotal = items.reduce(
+    (sum, item) => sum + (parseFloat(item.amount) || 0),
+    0,
+  );
+  const currentBill = subTotal - (parseFloat(globalDiscount) || 0);
+  const grandTotal = currentBill + (parseFloat(prevBalance) || 0);
+  const totalPaid = (parseFloat(cashPaid) || 0) + (parseFloat(upiPaid) || 0);
+  const closingBalance = grandTotal - totalPaid;
 
   // --- AUTOSCROLL THE DROPDOWN ---
   useEffect(() => {
@@ -191,7 +207,6 @@ const TallyBillingPage = () => {
     updateItem(rowIndex, "unit", selectedUnit);
     setActiveUnitRow(null);
 
-    // Jumps to Tax % (col 7) after selecting Unit
     setTimeout(() => {
       document
         .querySelector(`input[data-row="${rowIndex}"][data-col="7"]`)
@@ -364,6 +379,7 @@ const TallyBillingPage = () => {
     }
   };
 
+  // --- WHEN A PRODUCT IS SELECTED ---
   const handleProductSelect = (rowIndex, product) => {
     const newItems = [...items];
 
@@ -381,11 +397,16 @@ const TallyBillingPage = () => {
     newItems[rowIndex].rate = product.sale || product.mrp || "";
     newItems[rowIndex].qty = "1";
 
+    // 1. Initial Amount Calculation
+    const q = 1;
+    const r = parseFloat(newItems[rowIndex].rate) || 0;
+    const t = parseFloat(newItems[rowIndex].tax) || 0;
+    newItems[rowIndex].amount = (q * (r + (r * t) / 100)).toFixed(2);
+
     setItems(newItems);
     setProductSuggestionList([]);
     setActiveItemRow(null);
 
-    // Jumps to col 1 (HSN)
     setTimeout(() => {
       document
         .querySelector(`input[data-row="${rowIndex}"][data-col="1"]`)
@@ -393,28 +414,59 @@ const TallyBillingPage = () => {
     }, 10);
   };
 
+  // --- THE MASTER MATH ENGINE ---
   const updateItem = (index, field, value) => {
     const newItems = [...items];
     newItems[index][field] = value;
+    const row = newItems[index];
 
+    // 1. UNIT SWAP: Change rate based on Unit
     if (field === "unit") {
-      const row = newItems[index];
       const typedUnit = value.toLowerCase().trim();
-
       if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
-        row.rate = row.altRate;
+        row.rate = row.altRate || "";
       } else if (
         row.primaryUnit &&
         typedUnit === row.primaryUnit.toLowerCase().trim()
       ) {
-        row.rate = row.primaryRate;
+        row.rate = row.primaryRate || "";
       }
     }
+
+    // 2. DISCOUNT LOGIC: Calculate Rate from MRP - Disc%
+    if (field === "disc" || field === "mrp") {
+      const d = parseFloat(row.disc) || 0;
+      const m = parseFloat(row.mrp) || 0;
+
+      if (d > 0 && m > 0) {
+        row.rate = (m - (m * d) / 100).toFixed(2);
+      }
+      // Bonus: Revert back to original rate if Discount is deleted!
+      else if (field === "disc" && (value.trim() === "" || d === 0)) {
+        const typedUnit = (row.unit || "").toLowerCase().trim();
+        if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
+          row.rate = row.altRate || "";
+        } else {
+          row.rate = row.primaryRate || "";
+        }
+      }
+    }
+
+    // 3. FINAL AMOUNT CALCULATION: Qty * (Rate + Tax)
+    if (["qty", "rate", "disc", "tax", "mrp", "unit"].includes(field)) {
+      const q = parseFloat(row.qty) || 0;
+      const r = parseFloat(row.rate) || 0; // Uses the newly calculated Rate!
+      const t = parseFloat(row.tax) || 0;
+
+      const rateWithTax = r + (r * t) / 100;
+      row.amount = (q * rateWithTax).toFixed(2);
+    }
+
     setItems(newItems);
 
+    // --- ITEM SEARCH LOGIC ---
     if (field == "desc") {
       const searchWords = value.toLowerCase().trim().split(/\s+/);
-
       if (value.length >= 6 && searchWords.length >= 2) {
         let filteredResults = dataForProductList.filter((item) => {
           const itemDescLowerCase = item.desc.toLowerCase();
@@ -424,6 +476,9 @@ const TallyBillingPage = () => {
         setProductSuggestionList(filteredResults);
         setActiveItemRow(index);
         setHighlightedIndex(0);
+      } else {
+        setProductSuggestionList([]);
+        setActiveItemRow(null);
       }
     }
   };
@@ -620,6 +675,9 @@ const TallyBillingPage = () => {
                     HSN
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
+                    Stock
+                  </th>
+                  <th className="p-2 w-16 border-b border-r border-gray-300">
                     Qty <span className="text-red-500">*</span>
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
@@ -738,6 +796,11 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
+                    {/* Plain Text: Stock */}
+                    <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-gray-50 text-center">
+                      {item.stock}
+                    </td>
+
                     {/* Col 2: Qty */}
                     <td className="p-1 border-r border-gray-200">
                       <input
@@ -782,7 +845,7 @@ const TallyBillingPage = () => {
                         onChange={(e) =>
                           updateItem(index, "disc", e.target.value)
                         }
-                        className={`${tableInputCSS} text-center`}
+                        className={`${tableInputCSS} text-center text-blue-600 font-bold`}
                         placeholder="0"
                       />
                     </td>
@@ -1011,9 +1074,8 @@ const TallyBillingPage = () => {
                   Sub Total
                 </span>
                 <input
-                  id="sub-total-input"
                   readOnly
-                  defaultValue="0.00"
+                  value={subTotal.toFixed(2)}
                   className={`${fieldCSS} w-32 text-right bg-gray-50`}
                 />
               </div>
@@ -1022,10 +1084,12 @@ const TallyBillingPage = () => {
                   (-) Discount
                 </span>
                 <input
-                  id="discount-input"
                   type="text"
                   inputMode="decimal"
-                  defaultValue="0"
+                  value={globalDiscount}
+                  onChange={(e) => setGlobalDiscount(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="0"
                   className={`${fieldCSS} w-32 text-right text-[#1e3a8a]`}
                 />
               </div>
@@ -1034,9 +1098,8 @@ const TallyBillingPage = () => {
                   Current Bill
                 </span>
                 <input
-                  id="current-bill-input"
                   readOnly
-                  defaultValue="0.00"
+                  value={currentBill.toFixed(2)}
                   className={`${fieldCSS} w-32 text-right bg-gray-50 text-[#1e3a8a]`}
                 />
               </div>
@@ -1045,10 +1108,12 @@ const TallyBillingPage = () => {
                   (+) Previous Balance
                 </span>
                 <input
-                  id="prev-balance-input"
                   type="text"
                   inputMode="decimal"
-                  defaultValue="0"
+                  value={prevBalance}
+                  onChange={(e) => setPrevBalance(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="0"
                   className={`${fieldCSS} w-32 text-right text-[#1e3a8a]`}
                 />
               </div>
@@ -1058,9 +1123,8 @@ const TallyBillingPage = () => {
                   Grand Total Due
                 </span>
                 <input
-                  id="grand-total-input"
                   readOnly
-                  defaultValue="0.00"
+                  value={grandTotal.toFixed(2)}
                   className={`${fieldCSS} w-32 text-right bg-transparent border-none text-lg`}
                 />
               </div>
@@ -1077,7 +1141,10 @@ const TallyBillingPage = () => {
                     id="cash-input"
                     type="text"
                     inputMode="decimal"
-                    defaultValue="0"
+                    value={cashPaid}
+                    onChange={(e) => setCashPaid(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0"
                     className={`${fieldCSS} w-28 text-right`}
                   />
                 </div>
@@ -1089,7 +1156,10 @@ const TallyBillingPage = () => {
                     id="upi-input"
                     type="text"
                     inputMode="decimal"
-                    defaultValue="0"
+                    value={upiPaid}
+                    onChange={(e) => setUpiPaid(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0"
                     className={`${fieldCSS} w-28 text-right`}
                   />
                 </div>
@@ -1102,7 +1172,7 @@ const TallyBillingPage = () => {
                 <input
                   id="total-paid-input"
                   readOnly
-                  defaultValue="0.00"
+                  value={totalPaid.toFixed(2)}
                   className={`${fieldCSS} w-32 text-right bg-transparent border-none text-[13px] text-green-700`}
                 />
               </div>
@@ -1115,7 +1185,7 @@ const TallyBillingPage = () => {
               <input
                 id="closing-balance-input"
                 readOnly
-                value="0.00"
+                value={closingBalance.toFixed(2)}
                 className="bg-transparent text-xl font-bold text-white outline-none text-right w-40 cursor-default focus:ring-2 focus:ring-white rounded px-1 transition-shadow"
               />
             </div>
@@ -1308,66 +1378,41 @@ const TallyBillingPage = () => {
                           <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
                             <div className="flex justify-between w-[60%]">
                               <span>SUB TOTAL:</span>
-                              <span>
-                                {document.getElementById("sub-total-input")
-                                  ?.value || "0.00"}
-                              </span>
+                              <span>{subTotal.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between mb-1 w-[60%]">
                               <span>DISCOUNT:</span>
-                              <span>
-                                {document.getElementById("discount-input")
-                                  ?.value || "0"}
-                              </span>
+                              <span>{globalDiscount || "0"}</span>
                             </div>
                           </div>
                           <div className="border-t border-dashed border-black pt-1">
                             <div className="flex justify-between">
                               <span>CURRENT BILL AMOUNT:</span>
-                              <span>
-                                {document.getElementById("current-bill-input")
-                                  ?.value || "0.00"}
-                              </span>
+                              <span>{currentBill.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between mb-1">
                               <span>(+) PREVIOUS BALANCE:</span>
-                              <span>
-                                {document.getElementById("prev-balance-input")
-                                  ?.value || "0.00"}
-                              </span>
+                              <span>{prevBalance || "0"}</span>
                             </div>
                           </div>
                           <div className="border-t border-dashed border-black pt-1">
                             <div className="flex justify-between">
                               <span>(=) GRAND TOTAL DUE:</span>
-                              <span>
-                                {document.getElementById("grand-total-input")
-                                  ?.value || "0.00"}
-                              </span>
+                              <span>{grandTotal.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
                               <span>(-) PAID NOW (CASH):</span>
-                              <span>
-                                {document.getElementById("cash-input")?.value ||
-                                  "0.00"}
-                              </span>
+                              <span>{cashPaid || "0"}</span>
                             </div>
                             {/* NEW UPI FIELD */}
                             <div className="flex justify-between mb-1">
                               <span>(-) PAID NOW (UPI/BANK):</span>
-                              <span>
-                                {document.getElementById("upi-input")?.value ||
-                                  "0.00"}
-                              </span>
+                              <span>{upiPaid || "0"}</span>
                             </div>
                           </div>
                           <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
                             <span>CLOSING BALANCE:</span>
-                            <span>
-                              {document.getElementById("closing-balance-input")
-                                ?.value || "0.00"}{" "}
-                              (PAID)
-                            </span>
+                            <span>{closingBalance.toFixed(2)} (PAID)</span>
                           </div>
                         </div>
                       </td>
@@ -1523,67 +1568,44 @@ const TallyBillingPage = () => {
                   <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
                     <div className="flex justify-between w-[60%]">
                       <span>SUB TOTAL:</span>
-                      <span>
-                        {document.getElementById("sub-total-input")?.value ||
-                          "0.00"}
-                      </span>
+                      <span>{subTotal.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between mb-1 w-[60%]">
                       <span>DISCOUNT:</span>
-                      <span>
-                        {document.getElementById("discount-input")?.value ||
-                          "0"}
-                      </span>
+                      <span>{globalDiscount || "0"}</span>
                     </div>
                   </div>
 
                   <div className="border-t border-dashed border-black pt-1">
                     <div className="flex justify-between">
                       <span>CURRENT BILL AMOUNT:</span>
-                      <span>
-                        {document.getElementById("current-bill-input")?.value ||
-                          "0.00"}
-                      </span>
+                      <span>{currentBill.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between mb-1">
                       <span>(+) PREVIOUS BALANCE:</span>
-                      <span>
-                        {document.getElementById("prev-balance-input")?.value ||
-                          "0.00"}
-                      </span>
+                      <span>{prevBalance || "0"}</span>
                     </div>
                   </div>
 
                   <div className="border-t border-dashed border-black pt-1">
                     <div className="flex justify-between">
                       <span>(=) GRAND TOTAL DUE:</span>
-                      <span>
-                        {document.getElementById("grand-total-input")?.value ||
-                          "0.00"}
-                      </span>
+                      <span>{grandTotal.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>(-) PAID NOW (CASH):</span>
-                      <span>
-                        {document.getElementById("cash-input")?.value || "0.00"}
-                      </span>
+                      <span>{cashPaid || "0"}</span>
                     </div>
                     {/* NEW UPI FIELD */}
                     <div className="flex justify-between mb-1">
                       <span>(-) PAID NOW (UPI/BANK):</span>
-                      <span>
-                        {document.getElementById("upi-input")?.value || "0.00"}
-                      </span>
+                      <span>{upiPaid || "0"}</span>
                     </div>
                   </div>
 
                   <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
                     <span>CLOSING BALANCE:</span>
-                    <span>
-                      {document.getElementById("closing-balance-input")
-                        ?.value || "0.00"}{" "}
-                      (PAID)
-                    </span>
+                    <span>{closingBalance.toFixed(2)} (PAID)</span>
                   </div>
                 </td>
               </tr>
