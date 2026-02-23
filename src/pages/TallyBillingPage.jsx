@@ -5,7 +5,7 @@ import { DataContext } from "../context/DataContextMain";
 const TallyBillingPage = () => {
   const dataContext = useContext(DataContext);
   const [dataForProductList, setDataForProductList] = useState([]);
-  const [highlightedIndex, setHighlightedIndex] = useState(0); // Tracks keyboard selection
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   const [productSuggestionList, setProductSuggestionList] = useState([]);
   const [activeItemRow, setActiveItemRow] = useState(null);
@@ -45,16 +45,11 @@ const TallyBillingPage = () => {
 
   // --- AUTOSCROLL THE DROPDOWN ---
   useEffect(() => {
-    // If the dropdown is open and we have a highlighted item...
     if (activeItemRow !== null && productSuggestionList.length > 0) {
-      // Find the exact row we just highlighted
       const activeElement = document.getElementById(
         `suggestion-${highlightedIndex}`,
       );
-
       if (activeElement) {
-        // Tell the browser to scroll it into view!
-        // 'nearest' means it will only scroll exactly as much as needed.
         activeElement.scrollIntoView({ block: "nearest" });
       }
     }
@@ -97,7 +92,6 @@ const TallyBillingPage = () => {
     const target = e.target;
     const currentId = target.id;
 
-    // CUSTOM NAVIGATION OVERRIDES
     if (currentId === "remarks-input") {
       if (
         (e.key === "ArrowUp" || e.key === "ArrowLeft") &&
@@ -194,16 +188,13 @@ const TallyBillingPage = () => {
   };
 
   const handleUnitSelect = (rowIndex, selectedUnit) => {
-    // 1. Update the item (Your existing updateItem logic will auto-swap the Rate!)
     updateItem(rowIndex, "unit", selectedUnit);
-
-    // 2. Close the dropdown
     setActiveUnitRow(null);
 
-    // 3. Auto-focus the Rate column (data-col="5")
+    // Jumps to Tax % (col 7) after selecting Unit
     setTimeout(() => {
       document
-        .querySelector(`input[data-row="${rowIndex}"][data-col="5"]`)
+        .querySelector(`input[data-row="${rowIndex}"][data-col="7"]`)
         ?.focus();
     }, 10);
   };
@@ -282,8 +273,8 @@ const TallyBillingPage = () => {
     // --- 1. NEW: DROPDOWN KEYBOARD NAVIGATION ---
     if (isDropdownOpen) {
       if (e.key === "ArrowDown") {
-        e.preventDefault(); // Stop page from scrolling
-        e.stopPropagation(); // Stop table grid navigation
+        e.preventDefault();
+        e.stopPropagation();
         setHighlightedIndex((prev) =>
           prev < productSuggestionList.length - 1 ? prev + 1 : prev,
         );
@@ -300,7 +291,6 @@ const TallyBillingPage = () => {
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        // If they press Enter, select the currently highlighted item!
         if (productSuggestionList[highlightedIndex]) {
           handleProductSelect(index, productSuggestionList[highlightedIndex]);
         }
@@ -377,13 +367,11 @@ const TallyBillingPage = () => {
   const handleProductSelect = (rowIndex, product) => {
     const newItems = [...items];
 
-    // Fill all the columns with the product data!
     newItems[rowIndex].desc = product.desc;
     newItems[rowIndex].hsn = product.hsn || "";
     newItems[rowIndex].stock = product.stock || 0;
     newItems[rowIndex].mrp = product.mrp || "";
 
-    // 1. HIDDEN MEMORY: Save both units and prices secretly in the row!
     newItems[rowIndex].primaryUnit = product.uqc;
     newItems[rowIndex].primaryRate = product.sale;
     newItems[rowIndex].altUnit = product.perUQC;
@@ -391,17 +379,16 @@ const TallyBillingPage = () => {
 
     newItems[rowIndex].unit = product.uqc || "Pcs";
     newItems[rowIndex].rate = product.sale || product.mrp || "";
-    newItems[rowIndex].qty = "1"; // Default to 1 qty when selected
+    newItems[rowIndex].qty = "1";
 
-    // Update state and close dropdown
     setItems(newItems);
     setProductSuggestionList([]);
     setActiveItemRow(null);
 
-    // Magic trick: Automatically move focus to the QTY column!
+    // Jumps to col 1 (HSN)
     setTimeout(() => {
       document
-        .querySelector(`input[data-row="${rowIndex}"][data-col="3"]`)
+        .querySelector(`input[data-row="${rowIndex}"][data-col="1"]`)
         ?.focus();
     }, 10);
   };
@@ -410,21 +397,17 @@ const TallyBillingPage = () => {
     const newItems = [...items];
     newItems[index][field] = value;
 
-    // --- NEW: AUTO-SWAP RATE BASED ON UNIT ---
     if (field === "unit") {
       const row = newItems[index];
       const typedUnit = value.toLowerCase().trim();
 
-      // Check if they typed the Alt Unit (e.g., "pcs")
       if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
-        row.rate = row.altRate; // Swap to secondary price!
-      }
-      // Check if they typed the Primary Unit (e.g., "box")
-      else if (
+        row.rate = row.altRate;
+      } else if (
         row.primaryUnit &&
         typedUnit === row.primaryUnit.toLowerCase().trim()
       ) {
-        row.rate = row.primaryRate; // Swap back to primary price!
+        row.rate = row.primaryRate;
       }
     }
     setItems(newItems);
@@ -435,14 +418,8 @@ const TallyBillingPage = () => {
       if (value.length >= 6 && searchWords.length >= 2) {
         let filteredResults = dataForProductList.filter((item) => {
           const itemDescLowerCase = item.desc.toLowerCase();
-
           return searchWords.every((word) => itemDescLowerCase.includes(word));
         });
-
-        console.log(
-          `Found ${filteredResults.length} matches for "${value}":`,
-          filteredResults,
-        );
 
         setProductSuggestionList(filteredResults);
         setActiveItemRow(index);
@@ -643,25 +620,22 @@ const TallyBillingPage = () => {
                     HSN
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
-                    Stock
+                    Qty <span className="text-red-500">*</span>
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
                     MRP
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
-                    Qty <span className="text-red-500">*</span>
-                  </th>
-                  <th className="p-2 w-20 border-b border-r border-gray-300">
-                    Unit <span className="text-red-500">*</span>
+                    Disc %
                   </th>
                   <th className="p-2 w-24 border-b border-r border-gray-300">
                     Rate <span className="text-red-500">*</span>
                   </th>
-                  <th className="p-2 w-16 border-b border-r border-gray-300">
-                    Tax %
+                  <th className="p-2 w-20 border-b border-r border-gray-300">
+                    Unit <span className="text-red-500">*</span>
                   </th>
                   <th className="p-2 w-16 border-b border-r border-gray-300">
-                    Disc %
+                    Tax %
                   </th>
                   <th className="p-2 w-28 border-b border-r border-gray-300 text-right">
                     Amount
@@ -680,6 +654,8 @@ const TallyBillingPage = () => {
                     <td className="p-1 border-r border-gray-200 text-center text-[12px] text-gray-500 font-medium">
                       {index + 1}
                     </td>
+
+                    {/* Col 0: Desc */}
                     <td className="p-1 border-r border-gray-200 relative">
                       <input
                         id={`desc-${index}`}
@@ -694,8 +670,6 @@ const TallyBillingPage = () => {
                         placeholder="Type item..."
                         autoComplete="off"
                       />
-
-                      {/* THE DROPDOWN UI */}
                       {activeItemRow === index &&
                         productSuggestionList.length > 0 && (
                           <div className="absolute top-[100%] left-0 w-[450px] bg-white border border-gray-300 shadow-2xl rounded-b-md z-50 max-h-60 overflow-y-auto">
@@ -706,36 +680,41 @@ const TallyBillingPage = () => {
                                 onClick={() => handleProductSelect(index, prod)}
                                 className={`p-2 text-[12px] cursor-pointer border-b border-gray-100 flex flex-col transition-colors ${
                                   highlightedIndex === i
-                                    ? "bg-blue-100 border-l-4 border-l-blue-600" // Highlighted style
-                                    : "hover:bg-blue-50 bg-white border-l-4 border-l-transparent" // Normal style
+                                    ? "bg-blue-100 border-l-4 border-l-blue-600"
+                                    : "hover:bg-blue-50 bg-white border-l-4 border-l-transparent"
                                 }`}
                               >
                                 <span className="font-bold text-[#1e3a8a]">
                                   {prod.desc}
                                 </span>
-                                <div className="flex gap-4 text-gray-500 text-[11px] mt-1">
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 text-gray-500 text-[11px] mt-1 items-center">
                                   <span>
                                     Stock:{" "}
                                     <span
                                       className={
                                         prod.stock > 0
-                                          ? "text-green-600 font-bold"
-                                          : "text-red-500 font-bold"
+                                          ? "text-green-600 font-bold text-[12px]"
+                                          : "text-red-500 font-bold text-[12px]"
                                       }
                                     >
                                       {prod.stock}
                                     </span>
                                   </span>
-                                  <span>MRP: ₹{prod.mrp}</span>
-                                  {/* Primary Rate */}
-                                  <span className="font-bold text-gray-700">
-                                    ₹{prod.sale} / {prod.uqc}
+                                  <span className="border-l border-gray-300 pl-3">
+                                    Pur:{" "}
+                                    <span className="font-bold text-gray-700">
+                                      ₹{prod.purchase || "0"}
+                                    </span>
                                   </span>
-
-                                  {/* ONLY show the Alt Rate if it actually exists in the database! */}
+                                  <span className="border-l border-gray-300 pl-3">
+                                    MRP: ₹{prod.mrp}
+                                  </span>
+                                  <span className="border-l border-gray-300 pl-3 font-bold text-gray-700">
+                                    ₹{prod.sale}/{prod.uqc}
+                                  </span>
                                   {prod.perUQC && prod.salePerUQC && (
                                     <span className="border-l border-gray-300 pl-3 font-bold text-blue-600">
-                                      ₹{prod.salePerUQC} / {prod.perUQC}
+                                      ₹{prod.salePerUQC}/{prod.perUQC}
                                     </span>
                                   )}
                                 </div>
@@ -744,6 +723,8 @@ const TallyBillingPage = () => {
                           </div>
                         )}
                     </td>
+
+                    {/* Col 1: HSN */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -756,27 +737,12 @@ const TallyBillingPage = () => {
                         placeholder="-"
                       />
                     </td>
-                    <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-gray-50 text-center">
-                      {item.stock}
-                    </td>
+
+                    {/* Col 2: Qty */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
                         data-col="2"
-                        type="text"
-                        inputMode="decimal"
-                        value={item.mrp}
-                        onChange={(e) =>
-                          updateItem(index, "mrp", e.target.value)
-                        }
-                        className={`${tableInputCSS} text-center`}
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className="p-1 border-r border-gray-200">
-                      <input
-                        data-row={index}
-                        data-col="3"
                         type="text"
                         inputMode="decimal"
                         value={item.qty}
@@ -788,17 +754,66 @@ const TallyBillingPage = () => {
                         placeholder="0"
                       />
                     </td>
+
+                    {/* Col 3: MRP */}
+                    <td className="p-1 border-r border-gray-200">
+                      <input
+                        data-row={index}
+                        data-col="3"
+                        type="text"
+                        inputMode="decimal"
+                        value={item.mrp}
+                        onChange={(e) =>
+                          updateItem(index, "mrp", e.target.value)
+                        }
+                        className={`${tableInputCSS} text-center`}
+                        placeholder="0"
+                      />
+                    </td>
+
+                    {/* Col 4: Disc % */}
+                    <td className="p-1 border-r border-gray-200">
+                      <input
+                        data-row={index}
+                        data-col="4"
+                        type="text"
+                        inputMode="decimal"
+                        value={item.disc}
+                        onChange={(e) =>
+                          updateItem(index, "disc", e.target.value)
+                        }
+                        className={`${tableInputCSS} text-center`}
+                        placeholder="0"
+                      />
+                    </td>
+
+                    {/* Col 5: Rate */}
+                    <td className="p-1 border-r border-gray-200">
+                      <input
+                        data-row={index}
+                        data-col="5"
+                        type="text"
+                        inputMode="decimal"
+                        value={item.rate}
+                        onChange={(e) =>
+                          updateItem(index, "rate", e.target.value)
+                        }
+                        onKeyDown={enforceMandatory}
+                        className={`${tableInputCSS} text-right font-bold`}
+                        placeholder="0.00"
+                      />
+                    </td>
+
+                    {/* Col 6: Unit */}
                     <td className="p-1 border-r border-gray-200 relative">
                       {(() => {
-                        // 1. Find the available units for this specific product
                         const availableUnits = [
                           item.primaryUnit,
                           item.altUnit,
                         ].filter(Boolean);
                         if (availableUnits.length === 0)
-                          availableUnits.push("Pcs"); // Fallback if no units
+                          availableUnits.push("Pcs");
 
-                        // 2. Filter units based on what the user typed
                         const unitsToShow =
                           item.unit.trim() === ""
                             ? availableUnits
@@ -812,13 +827,12 @@ const TallyBillingPage = () => {
                           <>
                             <input
                               data-row={index}
-                              data-col="4"
+                              data-col="6"
                               type="text"
                               value={item.unit}
                               autoComplete="off"
                               placeholder="Pcs"
                               className={`${tableInputCSS} text-center font-bold text-[#1e3a8a]`}
-                              // TRIGGERS
                               onChange={(e) => {
                                 updateItem(index, "unit", e.target.value);
                                 setActiveUnitRow(index);
@@ -830,10 +844,8 @@ const TallyBillingPage = () => {
                               }}
                               onBlur={() =>
                                 setTimeout(() => setActiveUnitRow(null), 200)
-                              } // Delay so clicks register
-                              // KEYBOARD NAVIGATION
+                              }
                               onKeyDown={(e) => {
-                                // A. Dropdown Keyboard Logic
                                 if (
                                   activeUnitRow === index &&
                                   unitsToShow.length > 0
@@ -872,12 +884,9 @@ const TallyBillingPage = () => {
                                     return;
                                   }
                                 }
-                                // B. If dropdown didn't catch it, run your normal mandatory validation
                                 enforceMandatory(e);
                               }}
                             />
-
-                            {/* THE UNIT DROPDOWN UI */}
                             {activeUnitRow === index &&
                               unitsToShow.length > 0 && (
                                 <div className="absolute top-[100%] left-0 w-full min-w-[80px] bg-white border border-gray-300 shadow-xl rounded-b-md z-50 overflow-hidden">
@@ -889,8 +898,8 @@ const TallyBillingPage = () => {
                                       }
                                       className={`p-2 text-[12px] font-bold text-center cursor-pointer border-b border-gray-100 transition-colors ${
                                         highlightedUnitIndex === i
-                                          ? "bg-blue-100 text-[#1e3a8a]" // Highlighted
-                                          : "hover:bg-blue-50 bg-white text-gray-700" // Normal
+                                          ? "bg-blue-100 text-[#1e3a8a]"
+                                          : "hover:bg-blue-50 bg-white text-gray-700"
                                       }`}
                                     >
                                       {unitOpt}
@@ -902,25 +911,12 @@ const TallyBillingPage = () => {
                         );
                       })()}
                     </td>
+
+                    {/* Col 7: Tax % */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="5"
-                        type="text"
-                        inputMode="decimal"
-                        value={item.rate}
-                        onChange={(e) =>
-                          updateItem(index, "rate", e.target.value)
-                        }
-                        onKeyDown={enforceMandatory}
-                        className={`${tableInputCSS} text-right font-bold`}
-                        placeholder="0.00"
-                      />
-                    </td>
-                    <td className="p-1 border-r border-gray-200">
-                      <input
-                        data-row={index}
-                        data-col="6"
+                        data-col="7"
                         type="text"
                         inputMode="decimal"
                         value={item.tax}
@@ -931,20 +927,8 @@ const TallyBillingPage = () => {
                         placeholder="0"
                       />
                     </td>
-                    <td className="p-1 border-r border-gray-200">
-                      <input
-                        data-row={index}
-                        data-col="7"
-                        type="text"
-                        inputMode="decimal"
-                        value={item.disc}
-                        onChange={(e) =>
-                          updateItem(index, "disc", e.target.value)
-                        }
-                        className={`${tableInputCSS} text-center`}
-                        placeholder="0"
-                      />
-                    </td>
+
+                    {/* Col 8: Amount */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -955,6 +939,8 @@ const TallyBillingPage = () => {
                         className={`${tableInputCSS} font-bold text-right bg-gray-50`}
                       />
                     </td>
+
+                    {/* Delete Row */}
                     <td className="p-1 text-center">
                       <button
                         onClick={() => deleteItem(index)}
