@@ -1,7 +1,27 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useContext } from "react";
 import { Trash2, X } from "lucide-react";
+import { DataContext } from "../context/DataContextMain";
 
 const TallyBillingPage = () => {
+  const dataContext = useContext(DataContext);
+  const [dataForProductList, setDataForProductList] = useState([]);
+  const [highlightedIndex, setHighlightedIndex] = useState(0); // Tracks keyboard selection
+
+  const [productSuggestionList, setProductSuggestionList] = useState([]);
+  const [activeItemRow, setActiveItemRow] = useState(null);
+
+  const [activeUnitRow, setActiveUnitRow] = useState(null);
+  const [highlightedUnitIndex, setHighlightedUnitIndex] = useState(0);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const data = await dataContext.storeAndSearchProducts();
+      setDataForProductList(data || []);
+    };
+
+    loadData();
+  }, []);
+
   const pageRef = useRef(null);
 
   // --- 1. STATE ---
@@ -10,10 +30,10 @@ const TallyBillingPage = () => {
       id: 1,
       desc: "",
       hsn: "",
-      stock: 150,
+      stock: 0,
       mrp: "",
       qty: "",
-      unit: "Pcs",
+      unit: "",
       rate: "",
       tax: "",
       disc: "",
@@ -22,6 +42,23 @@ const TallyBillingPage = () => {
   ]);
 
   const [showSavePopup, setShowSavePopup] = useState(false);
+
+  // --- AUTOSCROLL THE DROPDOWN ---
+  useEffect(() => {
+    // If the dropdown is open and we have a highlighted item...
+    if (activeItemRow !== null && productSuggestionList.length > 0) {
+      // Find the exact row we just highlighted
+      const activeElement = document.getElementById(
+        `suggestion-${highlightedIndex}`,
+      );
+
+      if (activeElement) {
+        // Tell the browser to scroll it into view!
+        // 'nearest' means it will only scroll exactly as much as needed.
+        activeElement.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [highlightedIndex, activeItemRow, productSuggestionList]);
 
   // --- SAVE AND PRINT LOGIC ---
   const handleSaveBill = () => {
@@ -156,6 +193,21 @@ const TallyBillingPage = () => {
     }
   };
 
+  const handleUnitSelect = (rowIndex, selectedUnit) => {
+    // 1. Update the item (Your existing updateItem logic will auto-swap the Rate!)
+    updateItem(rowIndex, "unit", selectedUnit);
+
+    // 2. Close the dropdown
+    setActiveUnitRow(null);
+
+    // 3. Auto-focus the Rate column (data-col="5")
+    setTimeout(() => {
+      document
+        .querySelector(`input[data-row="${rowIndex}"][data-col="5"]`)
+        ?.focus();
+    }, 10);
+  };
+
   // --- 3. MANDATORY FIELD VALIDATION ---
   const enforceMandatory = (e) => {
     const navKeys = [
@@ -224,7 +276,45 @@ const TallyBillingPage = () => {
 
   const handleDescKeyDown = (e, index) => {
     const isDescEmpty = items[index].desc.trim() === "";
+    const isDropdownOpen =
+      activeItemRow === index && productSuggestionList.length > 0;
 
+    // --- 1. NEW: DROPDOWN KEYBOARD NAVIGATION ---
+    if (isDropdownOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault(); // Stop page from scrolling
+        e.stopPropagation(); // Stop table grid navigation
+        setHighlightedIndex((prev) =>
+          prev < productSuggestionList.length - 1 ? prev + 1 : prev,
+        );
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        // If they press Enter, select the currently highlighted item!
+        if (productSuggestionList[highlightedIndex]) {
+          handleProductSelect(index, productSuggestionList[highlightedIndex]);
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        setProductSuggestionList([]);
+        setActiveItemRow(null);
+        return;
+      }
+    }
+
+    // --- 2. EXISTING LOGIC (If dropdown is closed) ---
     if (e.key === "Enter" && isDescEmpty) {
       e.preventDefault();
       e.stopPropagation();
@@ -284,10 +374,81 @@ const TallyBillingPage = () => {
     }
   };
 
+  const handleProductSelect = (rowIndex, product) => {
+    const newItems = [...items];
+
+    // Fill all the columns with the product data!
+    newItems[rowIndex].desc = product.desc;
+    newItems[rowIndex].hsn = product.hsn || "";
+    newItems[rowIndex].stock = product.stock || 0;
+    newItems[rowIndex].mrp = product.mrp || "";
+
+    // 1. HIDDEN MEMORY: Save both units and prices secretly in the row!
+    newItems[rowIndex].primaryUnit = product.uqc;
+    newItems[rowIndex].primaryRate = product.sale;
+    newItems[rowIndex].altUnit = product.perUQC;
+    newItems[rowIndex].altRate = product.salePerUQC;
+
+    newItems[rowIndex].unit = product.uqc || "Pcs";
+    newItems[rowIndex].rate = product.sale || product.mrp || "";
+    newItems[rowIndex].qty = "1"; // Default to 1 qty when selected
+
+    // Update state and close dropdown
+    setItems(newItems);
+    setProductSuggestionList([]);
+    setActiveItemRow(null);
+
+    // Magic trick: Automatically move focus to the QTY column!
+    setTimeout(() => {
+      document
+        .querySelector(`input[data-row="${rowIndex}"][data-col="3"]`)
+        ?.focus();
+    }, 10);
+  };
+
   const updateItem = (index, field, value) => {
     const newItems = [...items];
     newItems[index][field] = value;
+
+    // --- NEW: AUTO-SWAP RATE BASED ON UNIT ---
+    if (field === "unit") {
+      const row = newItems[index];
+      const typedUnit = value.toLowerCase().trim();
+
+      // Check if they typed the Alt Unit (e.g., "pcs")
+      if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
+        row.rate = row.altRate; // Swap to secondary price!
+      }
+      // Check if they typed the Primary Unit (e.g., "box")
+      else if (
+        row.primaryUnit &&
+        typedUnit === row.primaryUnit.toLowerCase().trim()
+      ) {
+        row.rate = row.primaryRate; // Swap back to primary price!
+      }
+    }
     setItems(newItems);
+
+    if (field == "desc") {
+      const searchWords = value.toLowerCase().trim().split(/\s+/);
+
+      if (value.length >= 6 && searchWords.length >= 2) {
+        let filteredResults = dataForProductList.filter((item) => {
+          const itemDescLowerCase = item.desc.toLowerCase();
+
+          return searchWords.every((word) => itemDescLowerCase.includes(word));
+        });
+
+        console.log(
+          `Found ${filteredResults.length} matches for "${value}":`,
+          filteredResults,
+        );
+
+        setProductSuggestionList(filteredResults);
+        setActiveItemRow(index);
+        setHighlightedIndex(0);
+      }
+    }
   };
 
   const deleteItem = (indexToDelete) => {
@@ -519,7 +680,7 @@ const TallyBillingPage = () => {
                     <td className="p-1 border-r border-gray-200 text-center text-[12px] text-gray-500 font-medium">
                       {index + 1}
                     </td>
-                    <td className="p-1 border-r border-gray-200">
+                    <td className="p-1 border-r border-gray-200 relative">
                       <input
                         id={`desc-${index}`}
                         data-row={index}
@@ -531,7 +692,57 @@ const TallyBillingPage = () => {
                         onKeyDown={(e) => handleDescKeyDown(e, index)}
                         className={`${tableInputCSS} font-medium`}
                         placeholder="Type item..."
+                        autoComplete="off"
                       />
+
+                      {/* THE DROPDOWN UI */}
+                      {activeItemRow === index &&
+                        productSuggestionList.length > 0 && (
+                          <div className="absolute top-[100%] left-0 w-[450px] bg-white border border-gray-300 shadow-2xl rounded-b-md z-50 max-h-60 overflow-y-auto">
+                            {productSuggestionList.map((prod, i) => (
+                              <div
+                                key={i}
+                                id={`suggestion-${i}`}
+                                onClick={() => handleProductSelect(index, prod)}
+                                className={`p-2 text-[12px] cursor-pointer border-b border-gray-100 flex flex-col transition-colors ${
+                                  highlightedIndex === i
+                                    ? "bg-blue-100 border-l-4 border-l-blue-600" // Highlighted style
+                                    : "hover:bg-blue-50 bg-white border-l-4 border-l-transparent" // Normal style
+                                }`}
+                              >
+                                <span className="font-bold text-[#1e3a8a]">
+                                  {prod.desc}
+                                </span>
+                                <div className="flex gap-4 text-gray-500 text-[11px] mt-1">
+                                  <span>
+                                    Stock:{" "}
+                                    <span
+                                      className={
+                                        prod.stock > 0
+                                          ? "text-green-600 font-bold"
+                                          : "text-red-500 font-bold"
+                                      }
+                                    >
+                                      {prod.stock}
+                                    </span>
+                                  </span>
+                                  <span>MRP: ₹{prod.mrp}</span>
+                                  {/* Primary Rate */}
+                                  <span className="font-bold text-gray-700">
+                                    ₹{prod.sale} / {prod.uqc}
+                                  </span>
+
+                                  {/* ONLY show the Alt Rate if it actually exists in the database! */}
+                                  {prod.perUQC && prod.salePerUQC && (
+                                    <span className="border-l border-gray-300 pl-3 font-bold text-blue-600">
+                                      ₹{prod.salePerUQC} / {prod.perUQC}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                     </td>
                     <td className="p-1 border-r border-gray-200">
                       <input
@@ -577,19 +788,119 @@ const TallyBillingPage = () => {
                         placeholder="0"
                       />
                     </td>
-                    <td className="p-1 border-r border-gray-200">
-                      <input
-                        data-row={index}
-                        data-col="4"
-                        type="text"
-                        value={item.unit}
-                        onChange={(e) =>
-                          updateItem(index, "unit", e.target.value)
-                        }
-                        onKeyDown={enforceMandatory}
-                        className={`${tableInputCSS} text-center`}
-                        placeholder="Pcs"
-                      />
+                    <td className="p-1 border-r border-gray-200 relative">
+                      {(() => {
+                        // 1. Find the available units for this specific product
+                        const availableUnits = [
+                          item.primaryUnit,
+                          item.altUnit,
+                        ].filter(Boolean);
+                        if (availableUnits.length === 0)
+                          availableUnits.push("Pcs"); // Fallback if no units
+
+                        // 2. Filter units based on what the user typed
+                        const unitsToShow =
+                          item.unit.trim() === ""
+                            ? availableUnits
+                            : availableUnits.filter((u) =>
+                                u
+                                  .toLowerCase()
+                                  .includes(item.unit.toLowerCase()),
+                              );
+
+                        return (
+                          <>
+                            <input
+                              data-row={index}
+                              data-col="4"
+                              type="text"
+                              value={item.unit}
+                              autoComplete="off"
+                              placeholder="Pcs"
+                              className={`${tableInputCSS} text-center font-bold text-[#1e3a8a]`}
+                              // TRIGGERS
+                              onChange={(e) => {
+                                updateItem(index, "unit", e.target.value);
+                                setActiveUnitRow(index);
+                                setHighlightedUnitIndex(0);
+                              }}
+                              onFocus={() => {
+                                setActiveUnitRow(index);
+                                setHighlightedUnitIndex(0);
+                              }}
+                              onBlur={() =>
+                                setTimeout(() => setActiveUnitRow(null), 200)
+                              } // Delay so clicks register
+                              // KEYBOARD NAVIGATION
+                              onKeyDown={(e) => {
+                                // A. Dropdown Keyboard Logic
+                                if (
+                                  activeUnitRow === index &&
+                                  unitsToShow.length > 0
+                                ) {
+                                  if (e.key === "ArrowDown") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setHighlightedUnitIndex((prev) =>
+                                      prev < unitsToShow.length - 1
+                                        ? prev + 1
+                                        : prev,
+                                    );
+                                    return;
+                                  }
+                                  if (e.key === "ArrowUp") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setHighlightedUnitIndex((prev) =>
+                                      prev > 0 ? prev - 1 : 0,
+                                    );
+                                    return;
+                                  }
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (unitsToShow[highlightedUnitIndex]) {
+                                      handleUnitSelect(
+                                        index,
+                                        unitsToShow[highlightedUnitIndex],
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  if (e.key === "Escape") {
+                                    setActiveUnitRow(null);
+                                    return;
+                                  }
+                                }
+                                // B. If dropdown didn't catch it, run your normal mandatory validation
+                                enforceMandatory(e);
+                              }}
+                            />
+
+                            {/* THE UNIT DROPDOWN UI */}
+                            {activeUnitRow === index &&
+                              unitsToShow.length > 0 && (
+                                <div className="absolute top-[100%] left-0 w-full min-w-[80px] bg-white border border-gray-300 shadow-xl rounded-b-md z-50 overflow-hidden">
+                                  {unitsToShow.map((unitOpt, i) => (
+                                    <div
+                                      key={i}
+                                      onClick={() =>
+                                        handleUnitSelect(index, unitOpt)
+                                      }
+                                      className={`p-2 text-[12px] font-bold text-center cursor-pointer border-b border-gray-100 transition-colors ${
+                                        highlightedUnitIndex === i
+                                          ? "bg-blue-100 text-[#1e3a8a]" // Highlighted
+                                          : "hover:bg-blue-50 bg-white text-gray-700" // Normal
+                                      }`}
+                                    >
+                                      {unitOpt}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="p-1 border-r border-gray-200">
                       <input
