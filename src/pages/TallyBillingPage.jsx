@@ -1,30 +1,49 @@
 import React, { useState, useRef, useEffect, useContext } from "react";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X, Plus } from "lucide-react";
 import { DataContext } from "../context/DataContextMain";
 
 const TallyBillingPage = () => {
   const dataContext = useContext(DataContext);
   const [dataForProductList, setDataForProductList] = useState([]);
+  const [dataForBillList, setDataForBillList] = useState([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   const [productSuggestionList, setProductSuggestionList] = useState([]);
   const [activeItemRow, setActiveItemRow] = useState(null);
 
+  // --- CUSTOMER SUGGESTION STATES ---
+  const [customerSuggestionList, setCustomerSuggestionList] = useState([]);
+  const [highlightedCustomerIndex, setHighlightedCustomerIndex] = useState(0);
+
   const [activeUnitRow, setActiveUnitRow] = useState(null);
   const [highlightedUnitIndex, setHighlightedUnitIndex] = useState(0);
 
+  // --- LINKED BILLS STATE ---
+  const [linkedBills, setLinkedBills] = useState([]);
+  const [linkBillNo, setLinkBillNo] = useState("");
+  const [linkBillAmount, setLinkBillAmount] = useState("");
+
   // --- PAYMENT SUMMARY STATES ---
   const [globalDiscount, setGlobalDiscount] = useState("");
-  const [prevBalance, setPrevBalance] = useState("");
   const [cashPaid, setCashPaid] = useState("");
   const [upiPaid, setUpiPaid] = useState("");
+
+  // --- ADD THESE NEW STATES ---
+  const [isSaved, setIsSaved] = useState(false);
+  const [billNo, setBillNo] = useState(() => {
+    // Check if we have a saved bill number, otherwise start at 1001
+    const savedNo = localStorage.getItem("ge_last_bill_no");
+    return savedNo ? (parseInt(savedNo) + 1).toString() : "1001";
+  });
 
   useEffect(() => {
     const loadData = async () => {
       const data = await dataContext.storeAndSearchProducts();
       setDataForProductList(data || []);
-    };
 
+      const billData = await dataContext.getAllBillData();
+      setDataForBillList(billData || []);
+    };
     loadData();
   }, [dataContext]);
 
@@ -34,6 +53,8 @@ const TallyBillingPage = () => {
   const [items, setItems] = useState([
     {
       id: 1,
+      mode: "Sale", // NEW!
+      refBill: "", // NEW!
       desc: "",
       hsn: "",
       stock: 0,
@@ -50,14 +71,148 @@ const TallyBillingPage = () => {
   const [showSavePopup, setShowSavePopup] = useState(false);
 
   // --- DYNAMIC GLOBAL CALCULATIONS ---
-  const subTotal = items.reduce(
-    (sum, item) => sum + (parseFloat(item.amount) || 0),
+  const salesTotal = items
+    .filter((i) => i.mode === "Sale")
+    .reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+
+  const returnsTotal = items
+    .filter((i) => i.mode === "Return")
+    .reduce((sum, item) => sum + parseFloat(item.amount || 0), 0); // Is naturally negative
+
+  const netTotal = salesTotal + returnsTotal;
+  const currentBill = netTotal - (parseFloat(globalDiscount) || 0);
+
+  const prevBalance = linkedBills.reduce(
+    (sum, bill) => sum + parseFloat(bill.amount || 0),
     0,
   );
-  const currentBill = subTotal - (parseFloat(globalDiscount) || 0);
-  const grandTotal = currentBill + (parseFloat(prevBalance) || 0);
+
+  const grandTotal = currentBill + prevBalance;
   const totalPaid = (parseFloat(cashPaid) || 0) + (parseFloat(upiPaid) || 0);
   const closingBalance = grandTotal - totalPaid;
+
+  // --- AUTOSCROLL CUSTOMER DROPDOWN ---
+  useEffect(() => {
+    if (customerSuggestionList.length > 0) {
+      const activeElement = document.getElementById(
+        `cust-suggestion-${highlightedCustomerIndex}`,
+      );
+      if (activeElement) {
+        activeElement.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [highlightedCustomerIndex, customerSuggestionList]);
+
+  // --- CUSTOMER AUTOCOMPLETE LOGIC ---
+  const filterCustomerNameBill = (value) => {
+    const searchWords = value.toLowerCase().trim().split(/\s+/);
+
+    if (value.length >= 3 && searchWords.length >= 1) {
+      // Lowered to 3 chars for quicker search
+      let filteredResults = dataForBillList.filter((item) => {
+        const customerNameLowerCase = (item.customer_name || "").toLowerCase();
+        return searchWords.every((word) =>
+          customerNameLowerCase.includes(word),
+        );
+      });
+
+      // Filter out duplicate customers so we don't show the same person 10 times
+      const uniqueCustomers = [];
+      const seen = new Set();
+      for (const item of filteredResults) {
+        const key = `${item.customer_name}-${item.customer_mobile}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          uniqueCustomers.push(item);
+        }
+      }
+
+      setCustomerSuggestionList(uniqueCustomers);
+      setHighlightedCustomerIndex(0);
+    } else {
+      setCustomerSuggestionList([]);
+    }
+  };
+
+  const handleCustomerSelect = (customer) => {
+    // 1. Fill the DOM inputs
+    const nameInput = document.getElementById("customer-name-input");
+    if (nameInput) nameInput.value = customer.customer_name || "";
+
+    const phoneInput = document.getElementById("customer-phone-input");
+    if (phoneInput) phoneInput.value = customer.customer_mobile || "";
+
+    const addressInput = document.querySelector(
+      'input[placeholder="Enter Address..."]',
+    );
+    if (addressInput) addressInput.value = customer.customer_address || "";
+
+    const refNameInput = document.getElementById("ref-name-input");
+    if (refNameInput) refNameInput.value = customer.ref_name || "";
+
+    const refPhoneInput = document.getElementById("ref-phone-input");
+    if (refPhoneInput) refPhoneInput.value = customer.ref_mobile || "";
+
+    // 2. Clear the dropdown
+    setCustomerSuggestionList([]);
+
+    // 3. Jump focus to the items grid automatically!
+    setTimeout(() => {
+      document.querySelector('[data-col="0"]')?.focus();
+    }, 10);
+  };
+
+  const handleCustomerNameKeyDown = (e) => {
+    // If the dropdown is open, intercept the keys!
+    if (customerSuggestionList.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation(); // Stops the global handleKeyDown from stealing the key
+        setHighlightedCustomerIndex((prev) =>
+          prev < customerSuggestionList.length - 1 ? prev + 1 : prev,
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        setHighlightedCustomerIndex((prev) => (prev > 0 ? prev - 1 : 0));
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (customerSuggestionList[highlightedCustomerIndex]) {
+          handleCustomerSelect(
+            customerSuggestionList[highlightedCustomerIndex],
+          );
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setCustomerSuggestionList([]);
+        return;
+      }
+    }
+    // If dropdown is closed, just run the mandatory red-flash check
+    enforceMandatory(e);
+  };
+
+  // --- LINKED BILLS LOGIC ---
+  const handleAddLinkedBill = () => {
+    if (linkBillNo.trim() && linkBillAmount) {
+      setLinkedBills([
+        ...linkedBills,
+        { no: linkBillNo.trim(), amount: parseFloat(linkBillAmount) },
+      ]);
+      setLinkBillNo("");
+      setLinkBillAmount("");
+    }
+  };
+
+  const handleRemoveLinkedBill = (indexToRemove) => {
+    setLinkedBills(linkedBills.filter((_, i) => i !== indexToRemove));
+  };
 
   // --- AUTOSCROLL THE DROPDOWN ---
   useEffect(() => {
@@ -72,9 +227,122 @@ const TallyBillingPage = () => {
   }, [highlightedIndex, activeItemRow, productSuggestionList]);
 
   // --- SAVE AND PRINT LOGIC ---
-  const handleSaveBill = () => {
-    console.log("Bill saved successfully!");
-    setShowSavePopup(true);
+  // --- UPDATED SAVE/PRINT LOGIC ---
+  const handleSaveBill = async (isPrintAction = false) => {
+    // 1. IF CLICKING PRINT AND ALREADY SAVED, JUST OPEN PREVIEW
+    if (isPrintAction && isSaved) {
+      setShowSavePopup(true);
+      return;
+    }
+
+    const customerName = document
+      .getElementById("customer-name-input")
+      ?.value.trim();
+    const customerPhone = document
+      .getElementById("customer-phone-input")
+      ?.value.trim();
+    const customerAddress =
+      document
+        .querySelector('input[placeholder="Enter Address..."]')
+        ?.value.trim() || "";
+
+    if (!customerName) {
+      alert("Customer Name is required to save the bill.");
+      document.getElementById("customer-name-input")?.focus();
+      return;
+    }
+
+    const validItems = items.filter((i) => i.desc.trim() !== "");
+    if (validItems.length === 0) {
+      alert("Please add at least one item to the bill.");
+      return;
+    }
+
+    const payload = {
+      billNo: billNo, // Use the state variable here
+      date: document.getElementById("date-input")?.value,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      customerAddress: customerAddress,
+      refName: document.getElementById("ref-name-input")?.value.trim() || "",
+      refPhone: document.getElementById("ref-phone-input")?.value.trim() || "",
+      items: validItems,
+      salesTotal: salesTotal,
+      returnsTotal: returnsTotal,
+      netTotal: netTotal,
+      linkedBills: linkedBills,
+      prevBalance: prevBalance,
+      globalDiscount: globalDiscount || 0,
+      grandTotal: grandTotal,
+      payments: { cash: cashPaid || 0, upi: upiPaid || 0 },
+      totalPayment: totalPaid,
+      closingBalance: closingBalance,
+      remarks: document.getElementById("remarks-input")?.value || "",
+    };
+
+    // 2. OPTIMISTIC UI: Open print preview INSTANTLY before waiting for Google Sheets
+    if (isPrintAction) {
+      setShowSavePopup(true);
+    }
+
+    // 3. Lock the bill to prevent duplicate saves
+    setIsSaved(true);
+    localStorage.setItem("ge_last_bill_no", billNo); // Remember this number
+
+    // 4. Fire the save to Google Sheets in the background!
+    dataContext.saveBillToSheet(payload).then((result) => {
+      if (!result?.success) {
+        console.error("Background save failed:", result?.error);
+        alert("Warning: Failed to save to Google Sheets.");
+        setIsSaved(false); // Unlock if it failed so they can try again
+      } else if (!isPrintAction) {
+        alert("Bill saved successfully!");
+      }
+    });
+  };
+
+  // --- NEW RESET FUNCTION ---
+  const resetForm = () => {
+    // Bump Bill Number
+    setBillNo((prev) => (parseInt(prev) + 1).toString());
+
+    // Reset Data
+    setItems([
+      {
+        id: Date.now(),
+        mode: "Sale",
+        refBill: "",
+        desc: "",
+        hsn: "",
+        stock: 0,
+        mrp: "",
+        qty: "",
+        unit: "Pcs",
+        rate: "",
+        tax: "",
+        disc: "",
+        amount: "0.00",
+      },
+    ]);
+    setLinkedBills([]);
+    setCustomerSuggestionList([]);
+    setGlobalDiscount("");
+    setCashPaid("");
+    setUpiPaid("");
+    setIsSaved(false); // Unlock saving for the new bill
+
+    // Clear Inputs
+    document.getElementById("customer-name-input").value = "";
+    document.getElementById("customer-phone-input").value = "";
+    const addr = document.querySelector(
+      'input[placeholder="Enter Address..."]',
+    );
+    if (addr) addr.value = "";
+    document.getElementById("ref-name-input").value = "";
+    document.getElementById("ref-phone-input").value = "";
+    document.getElementById("remarks-input").value = "";
+
+    document.getElementById("customer-name-input")?.focus();
   };
 
   const handlePrint = () => {
@@ -108,6 +376,11 @@ const TallyBillingPage = () => {
     const target = e.target;
     const currentId = target.id;
 
+    // --- NEW FIX: Let buttons handle their own Enter key naturally! ---
+    if (target.tagName === "BUTTON" && e.key === "Enter") {
+      return; // Stop the global handler from swallowing the click
+    }
+
     if (currentId === "remarks-input") {
       if (
         (e.key === "ArrowUp" || e.key === "ArrowLeft") &&
@@ -115,7 +388,7 @@ const TallyBillingPage = () => {
       ) {
         e.preventDefault();
         document
-          .querySelector(`input[data-row="${items.length - 1}"][data-col="8"]`)
+          .querySelector(`input[data-row="${items.length - 1}"][data-col="10"]`) // Jump to Amount col
           ?.focus();
         return;
       }
@@ -124,7 +397,7 @@ const TallyBillingPage = () => {
         target.selectionEnd === target.value.length
       ) {
         e.preventDefault();
-        document.getElementById("sub-total-input")?.focus();
+        document.getElementById("discount-input")?.focus();
         return;
       }
     }
@@ -140,12 +413,13 @@ const TallyBillingPage = () => {
     if (currentId === "closing-balance-input") {
       if (["ArrowLeft", "ArrowUp"].includes(e.key)) {
         e.preventDefault();
-        document.getElementById("total-paid-input")?.focus();
+        document.getElementById("upi-input")?.focus();
         return;
       }
       if (["Enter", "ArrowRight", "ArrowDown"].includes(e.key)) {
         e.preventDefault();
-        handleSaveBill();
+        // Move focus to the Save button instead of instantly saving
+        document.getElementById("save-btn")?.focus();
         return;
       }
     }
@@ -166,6 +440,7 @@ const TallyBillingPage = () => {
     let nextIndex = currentIndex;
 
     if (e.key === "Enter") {
+      if (currentId === "link-bill-amt") return; // Prevent skipping when adding linked bill
       e.preventDefault();
       nextIndex = currentIndex + 1;
     } else if (!isTableInput) {
@@ -207,9 +482,10 @@ const TallyBillingPage = () => {
     updateItem(rowIndex, "unit", selectedUnit);
     setActiveUnitRow(null);
 
+    // Jumps to Tax % (col 9) after selecting Unit
     setTimeout(() => {
       document
-        .querySelector(`input[data-row="${rowIndex}"][data-col="7"]`)
+        .querySelector(`input[data-row="${rowIndex}"][data-col="9"]`)
         ?.focus();
     }, 10);
   };
@@ -256,13 +532,18 @@ const TallyBillingPage = () => {
       nextRow = row + 1;
       e.preventDefault();
     } else if (e.key === "ArrowLeft") {
-      if (target.readOnly || target.selectionStart === 0) {
+      if (
+        target.readOnly ||
+        target.selectionStart === 0 ||
+        target.tagName === "SELECT"
+      ) {
         nextCol = col - 1;
         e.preventDefault();
       } else return;
     } else if (e.key === "ArrowRight") {
       if (
         target.readOnly ||
+        target.tagName === "SELECT" ||
         target.selectionEnd === (target.value?.length || 0)
       ) {
         nextCol = col + 1;
@@ -272,7 +553,7 @@ const TallyBillingPage = () => {
 
     if (nextRow !== row || nextCol !== col) {
       const nextCell = document.querySelector(
-        `input[data-row="${nextRow}"][data-col="${nextCol}"]`,
+        `[data-row="${nextRow}"][data-col="${nextCol}"]`,
       );
       if (nextCell) {
         nextCell.focus();
@@ -355,6 +636,8 @@ const TallyBillingPage = () => {
           ...items,
           {
             id: Date.now(),
+            mode: "Sale",
+            refBill: "",
             desc: "",
             hsn: "",
             stock: 0,
@@ -371,7 +654,7 @@ const TallyBillingPage = () => {
         setTimeout(
           () =>
             document
-              .querySelector(`input[data-row="${index + 1}"][data-col="0"]`)
+              .querySelector(`[data-row="${index + 1}"][data-col="0"]`) // Jumps to Mode Select
               ?.focus(),
           10,
         );
@@ -397,39 +680,57 @@ const TallyBillingPage = () => {
     newItems[rowIndex].rate = product.sale || product.mrp || "";
     newItems[rowIndex].qty = "1";
 
-    // 1. Initial Amount Calculation
+    // Amount Calculation (Respects Mode)
     const q = 1;
     const r = parseFloat(newItems[rowIndex].rate) || 0;
     const t = parseFloat(newItems[rowIndex].tax) || 0;
-    newItems[rowIndex].amount = (q * (r + (r * t) / 100)).toFixed(2);
+    let finalAmount = q * (r + (r * t) / 100);
+
+    if (newItems[rowIndex].mode === "Return") {
+      finalAmount = -Math.abs(finalAmount);
+    }
+
+    newItems[rowIndex].amount = finalAmount.toFixed(2);
 
     setItems(newItems);
     setProductSuggestionList([]);
     setActiveItemRow(null);
 
+    // Jumps to col 3 (HSN)
     setTimeout(() => {
       document
-        .querySelector(`input[data-row="${rowIndex}"][data-col="1"]`)
+        .querySelector(`input[data-row="${rowIndex}"][data-col="3"]`)
         ?.focus();
     }, 10);
   };
 
   // --- THE MASTER MATH ENGINE ---
   const updateItem = (index, field, value) => {
+    // 1. CAPTURE THE OLD UNIT BEFORE WE UPDATE STATE
+    const oldUnit = items[index].unit;
+
     const newItems = [...items];
     newItems[index][field] = value;
     const row = newItems[index];
 
+    // Clear Ref Bill if swapped back to Sale
+    if (field === "mode" && value === "Sale") {
+      row.refBill = "";
+    }
+
     // 1. UNIT SWAP: Change rate based on Unit
     if (field === "unit") {
       const typedUnit = value.toLowerCase().trim();
-      if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
-        row.rate = row.altRate || "";
-      } else if (
-        row.primaryUnit &&
-        typedUnit === row.primaryUnit.toLowerCase().trim()
-      ) {
-        row.rate = row.primaryRate || "";
+      const prevUnit = (oldUnit || "").toLowerCase().trim();
+      if (typedUnit !== prevUnit) {
+        if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
+          row.rate = row.altRate || "";
+        } else if (
+          row.primaryUnit &&
+          typedUnit === row.primaryUnit.toLowerCase().trim()
+        ) {
+          row.rate = row.primaryRate || "";
+        }
       }
     }
 
@@ -440,9 +741,7 @@ const TallyBillingPage = () => {
 
       if (d > 0 && m > 0) {
         row.rate = (m - (m * d) / 100).toFixed(2);
-      }
-      // Bonus: Revert back to original rate if Discount is deleted!
-      else if (field === "disc" && (value.trim() === "" || d === 0)) {
+      } else if (field === "disc" && (value.trim() === "" || d === 0)) {
         const typedUnit = (row.unit || "").toLowerCase().trim();
         if (row.altUnit && typedUnit === row.altUnit.toLowerCase().trim()) {
           row.rate = row.altRate || "";
@@ -453,13 +752,23 @@ const TallyBillingPage = () => {
     }
 
     // 3. FINAL AMOUNT CALCULATION: Qty * (Rate + Tax)
-    if (["qty", "rate", "disc", "tax", "mrp", "unit"].includes(field)) {
-      const q = parseFloat(row.qty) || 0;
-      const r = parseFloat(row.rate) || 0; // Uses the newly calculated Rate!
+    if (["qty", "rate", "disc", "tax", "mrp", "unit", "mode"].includes(field)) {
+      // Force positive quantity internally to prevent double negatives
+      const q = Math.abs(parseFloat(row.qty) || 0);
+      const r = parseFloat(row.rate) || 0;
       const t = parseFloat(row.tax) || 0;
 
       const rateWithTax = r + (r * t) / 100;
-      row.amount = (q * rateWithTax).toFixed(2);
+      let finalAmount = q * rateWithTax;
+
+      // Smart Return Math
+      if (row.mode === "Return") {
+        finalAmount = -Math.abs(finalAmount);
+      } else {
+        finalAmount = Math.abs(finalAmount);
+      }
+
+      row.amount = finalAmount.toFixed(2);
     }
 
     setItems(newItems);
@@ -467,6 +776,7 @@ const TallyBillingPage = () => {
     // --- ITEM SEARCH LOGIC ---
     if (field == "desc") {
       const searchWords = value.toLowerCase().trim().split(/\s+/);
+
       if (value.length >= 6 && searchWords.length >= 2) {
         let filteredResults = dataForProductList.filter((item) => {
           const itemDescLowerCase = item.desc.toLowerCase();
@@ -488,6 +798,8 @@ const TallyBillingPage = () => {
       setItems([
         {
           id: Date.now(),
+          mode: "Sale",
+          refBill: "",
           desc: "",
           hsn: "",
           stock: 0,
@@ -529,26 +841,17 @@ const TallyBillingPage = () => {
         onKeyDown={handleKeyDown}
         className="flex flex-col min-h-full p-4 gap-4 w-full outline-none print:hidden print-hidden-all"
       >
-        {/* Top Form Bar */}
+        {/* Top Form Bar (Cleaned Up!) */}
         <div className="flex flex-col gap-4 p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
           <div className="flex flex-wrap items-end gap-4">
-            <div className="flex flex-col">
-              <label className={labelHeadingCSS}>Type</label>
-              <select className={`${fieldCSS} cursor-pointer w-28`}>
-                <option value="SALE">Sale</option>
-                <option value="RETURN">Return</option>
-                <option value="ESTIMATE">Estimate</option>
-                <option value="PAYMENT">Receipt</option>
-              </select>
-            </div>
             <div className="flex flex-col">
               <label className={labelHeadingCSS}>Bill No.</label>
               <input
                 id="bill-no-input"
                 type="text"
-                defaultValue="103"
+                value={billNo}
                 className={`${fieldCSS} w-24 bg-gray-50`}
-                readOnly
+                onChange={(e) => setBillNo(e.target.value)}
               />
             </div>
             <div className="flex flex-col">
@@ -560,7 +863,7 @@ const TallyBillingPage = () => {
                 className={`${fieldCSS} cursor-pointer w-32`}
               />
             </div>
-            <div className="flex flex-col flex-1 min-w-[200px]">
+            <div className="flex flex-col flex-1 min-w-[200px] relative">
               <label className={labelHeadingCSS}>
                 Customer Name <span className="text-red-500">*</span>
               </label>
@@ -569,8 +872,45 @@ const TallyBillingPage = () => {
                 type="text"
                 placeholder="Enter name..."
                 className={`${fieldCSS} w-full`}
-                onKeyDown={enforceMandatory}
+                onKeyDown={handleCustomerNameKeyDown}
+                onChange={(e) => filterCustomerNameBill(e.target.value)}
+                autoComplete="off"
               />
+
+              {/* --- CUSTOMER SUGGESTION DROPDOWN --- */}
+              {customerSuggestionList.length > 0 && (
+                <div className="absolute top-[100%] left-0 w-full min-w-[300px] bg-white border border-gray-300 shadow-2xl rounded-b-md z-50 max-h-60 overflow-y-auto mt-1">
+                  {customerSuggestionList.map((customer, i) => (
+                    <div
+                      key={i}
+                      id={`cust-suggestion-${i}`}
+                      onClick={() => handleCustomerSelect(customer)}
+                      className={`p-2 text-[12px] cursor-pointer border-b border-gray-100 flex flex-col transition-colors ${
+                        highlightedCustomerIndex === i
+                          ? "bg-blue-100 border-l-4 border-l-blue-600"
+                          : "hover:bg-blue-50 bg-white border-l-4 border-l-transparent"
+                      }`}
+                    >
+                      <span className="font-bold text-[#1e3a8a]">
+                        {customer.customer_name}
+                      </span>
+                      <div className="flex text-gray-500 text-[11px] mt-0.5 items-center">
+                        <span>
+                          Ph:{" "}
+                          <span className="font-medium text-gray-700">
+                            {customer.customer_mobile || "N/A"}
+                          </span>
+                        </span>
+                        {customer.customer_address && (
+                          <span className="border-l border-gray-300 pl-2 ml-2 truncate">
+                            Addr: {customer.customer_address}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex flex-col">
               <label className={labelHeadingCSS}>
@@ -593,24 +933,6 @@ const TallyBillingPage = () => {
                 type="text"
                 placeholder="Enter Address..."
                 className={`${fieldCSS} w-full`}
-              />
-            </div>
-            <div className="flex flex-col">
-              <label className={labelHeadingCSS}>Last Bill No.</label>
-              <select
-                id="last-bill-no-input"
-                className={`${fieldCSS} cursor-pointer w-32`}
-              >
-                <option value="">Select...</option>
-                <option value="INV-9566">INV-9566</option>
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className={labelHeadingCSS}>Last Bill Date</label>
-              <input
-                id="last-bill-date-input"
-                type="date"
-                className={`${fieldCSS} cursor-pointer w-32`}
               />
             </div>
             <div className="flex flex-col flex-1 min-w-[150px]">
@@ -636,6 +958,8 @@ const TallyBillingPage = () => {
                     setItems([
                       {
                         id: Date.now(),
+                        mode: "Sale",
+                        refBill: "",
                         desc: "",
                         hsn: "",
                         stock: 0,
@@ -649,7 +973,7 @@ const TallyBillingPage = () => {
                       },
                     ]);
                     setTimeout(
-                      () => document.getElementById("desc-0")?.focus(),
+                      () => document.querySelector('[data-col="0"]')?.focus(),
                       10,
                     );
                   }
@@ -662,11 +986,17 @@ const TallyBillingPage = () => {
         {/* Dynamic Table */}
         <div className="w-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
           <div className="w-full h-[320px] overflow-auto relative">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse min-w-max">
               <thead className="bg-gray-100 text-[12px] font-semibold text-gray-700 sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="p-2 w-10 text-center border-b border-r border-gray-300">
                     #
+                  </th>
+                  <th className="p-2 w-24 border-b border-r border-gray-300">
+                    Mode
+                  </th>
+                  <th className="p-2 w-28 border-b border-r border-gray-300">
+                    Ref Bill
                   </th>
                   <th className="p-2 w-64 border-b border-r border-gray-300">
                     Item Description
@@ -707,18 +1037,50 @@ const TallyBillingPage = () => {
                 {items.map((item, index) => (
                   <tr
                     key={item.id}
-                    className="border-b border-gray-200 hover:bg-gray-50 transition-colors"
+                    className={`border-b border-gray-200 transition-colors ${item.mode === "Return" ? "bg-red-50/60 hover:bg-red-100/60" : "hover:bg-gray-50"}`}
                   >
                     <td className="p-1 border-r border-gray-200 text-center text-[12px] text-gray-500 font-medium">
                       {index + 1}
                     </td>
 
-                    {/* Col 0: Desc */}
+                    {/* Col 0: Mode Dropdown */}
+                    <td className="p-1 border-r border-gray-200">
+                      <select
+                        data-row={index}
+                        data-col="0"
+                        value={item.mode}
+                        onChange={(e) =>
+                          updateItem(index, "mode", e.target.value)
+                        }
+                        className={`${tableInputCSS} cursor-pointer font-bold ${item.mode === "Return" ? "text-red-600" : "text-gray-700"}`}
+                      >
+                        <option value="Sale">Sale</option>
+                        <option value="Return">Return</option>
+                      </select>
+                    </td>
+
+                    {/* Col 1: Ref Bill */}
+                    <td className="p-1 border-r border-gray-200">
+                      <input
+                        data-row={index}
+                        data-col="1"
+                        value={item.refBill}
+                        onChange={(e) =>
+                          updateItem(index, "refBill", e.target.value)
+                        }
+                        readOnly={item.mode === "Sale"}
+                        tabIndex={item.mode === "Sale" ? -1 : 0}
+                        className={`${tableInputCSS} uppercase ${item.mode === "Sale" ? "opacity-30 cursor-not-allowed bg-transparent" : "bg-white font-bold"}`}
+                        placeholder={item.mode === "Sale" ? "N/A" : "INV-..."}
+                      />
+                    </td>
+
+                    {/* Col 2: Desc */}
                     <td className="p-1 border-r border-gray-200 relative">
                       <input
                         id={`desc-${index}`}
                         data-row={index}
-                        data-col="0"
+                        data-col="2"
                         value={item.desc}
                         onChange={(e) =>
                           updateItem(index, "desc", e.target.value)
@@ -782,11 +1144,11 @@ const TallyBillingPage = () => {
                         )}
                     </td>
 
-                    {/* Col 1: HSN */}
+                    {/* Col 3: HSN */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="1"
+                        data-col="3"
                         value={item.hsn}
                         onChange={(e) =>
                           updateItem(index, "hsn", e.target.value)
@@ -797,15 +1159,15 @@ const TallyBillingPage = () => {
                     </td>
 
                     {/* Plain Text: Stock */}
-                    <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-gray-50 text-center">
+                    <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-transparent text-center">
                       {item.stock}
                     </td>
 
-                    {/* Col 2: Qty */}
+                    {/* Col 4: Qty */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="2"
+                        data-col="4"
                         type="text"
                         inputMode="decimal"
                         value={item.qty}
@@ -818,11 +1180,11 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 3: MRP */}
+                    {/* Col 5: MRP */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="3"
+                        data-col="5"
                         type="text"
                         inputMode="decimal"
                         value={item.mrp}
@@ -834,11 +1196,11 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 4: Disc % */}
+                    {/* Col 6: Disc % */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="4"
+                        data-col="6"
                         type="text"
                         inputMode="decimal"
                         value={item.disc}
@@ -850,11 +1212,11 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 5: Rate */}
+                    {/* Col 7: Rate */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="5"
+                        data-col="7"
                         type="text"
                         inputMode="decimal"
                         value={item.rate}
@@ -867,7 +1229,7 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 6: Unit */}
+                    {/* Col 8: Unit */}
                     <td className="p-1 border-r border-gray-200 relative">
                       {(() => {
                         const availableUnits = [
@@ -890,7 +1252,7 @@ const TallyBillingPage = () => {
                           <>
                             <input
                               data-row={index}
-                              data-col="6"
+                              data-col="8"
                               type="text"
                               value={item.unit}
                               autoComplete="off"
@@ -975,11 +1337,11 @@ const TallyBillingPage = () => {
                       })()}
                     </td>
 
-                    {/* Col 7: Tax % */}
+                    {/* Col 9: Tax % */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="7"
+                        data-col="9"
                         type="text"
                         inputMode="decimal"
                         value={item.tax}
@@ -991,15 +1353,15 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 8: Amount */}
+                    {/* Col 10: Amount */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
-                        data-col="8"
+                        data-col="10"
                         value={item.amount}
                         readOnly
                         onKeyDown={(e) => handleLastColumnKeyDown(e, index)}
-                        className={`${tableInputCSS} font-bold text-right bg-gray-50`}
+                        className={`${tableInputCSS} font-bold text-right ${item.mode === "Return" ? "text-red-700" : "text-gray-900"}`}
                       />
                     </td>
 
@@ -1023,31 +1385,74 @@ const TallyBillingPage = () => {
         {/* Bottom Section */}
         <div className="flex gap-4 mt-auto">
           <div className="flex-1 flex flex-col gap-4">
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1 flex flex-col">
-              <label className="text-[12px] font-semibold text-gray-700 mb-2 block">
-                Remarks / Warranty Notes
+            {/* LINKED PREVIOUS BILLS WIDGET */}
+            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-col gap-3">
+              <label className="text-[12px] font-semibold text-gray-700 block uppercase tracking-wider">
+                Link Previous Pending Bills (Dues)
               </label>
-              <textarea
-                id="remarks-input"
-                className="w-full flex-1 p-2 border border-gray-300 rounded-md outline-none focus:border-[#1e3a8a] focus:bg-blue-50 focus:ring-1 focus:ring-[#1e3a8a] text-[12px] resize-none text-gray-800 font-medium transition-all"
-                placeholder="Enter warranty details, delivery notes, or customer remarks here..."
-              ></textarea>
+              <div className="flex gap-3 items-center">
+                <input
+                  type="text"
+                  placeholder="Bill No (e.g. INV-102)"
+                  value={linkBillNo}
+                  onChange={(e) => setLinkBillNo(e.target.value)}
+                  className={`${fieldCSS} w-36 uppercase`}
+                />
+                <input
+                  id="link-bill-amt"
+                  type="number"
+                  placeholder="Amount (₹)"
+                  value={linkBillAmount}
+                  onChange={(e) => setLinkBillAmount(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddLinkedBill()}
+                  className={`${fieldCSS} w-32 text-right`}
+                />
+                <button
+                  onClick={handleAddLinkedBill}
+                  tabIndex="-1"
+                  className="px-3 py-1.5 bg-blue-100 text-[#1e3a8a] font-bold rounded-md hover:bg-blue-200 transition-colors flex items-center gap-1 text-[12px]"
+                >
+                  <Plus size={14} /> Add
+                </button>
+              </div>
+
+              {/* Pilled List of Linked Bills */}
+              {linkedBills.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {linkedBills.map((lb, i) => (
+                    <span
+                      key={i}
+                      className="flex items-center gap-1.5 bg-gray-100 border border-gray-300 px-2.5 py-1 rounded text-[11px] font-bold text-gray-700"
+                    >
+                      {lb.no}:{" "}
+                      <span className="text-red-600">
+                        ₹{lb.amount.toFixed(2)}
+                      </span>
+                      <X
+                        size={14}
+                        className="cursor-pointer text-gray-400 hover:text-red-600 ml-1 transition-colors"
+                        onClick={() => handleRemoveLinkedBill(i)}
+                      />
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex gap-6 h-28">
-              <div className="flex-1">
-                <label className="text-[12px] font-semibold text-gray-700 mb-1 block">
-                  Terms & Conditions
+            <div className="flex gap-4 h-full">
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1 flex flex-col">
+                <label className="text-[12px] font-semibold text-gray-700 mb-2 block">
+                  Remarks / Warranty
                 </label>
-                <ul className="text-[11px] text-gray-600 list-disc pl-4 space-y-0.5">
-                  <li>Goods once sold will not be taken back.</li>
-                  <li>Warranty subject to manufacturer terms.</li>
-                  <li>Subject to local jurisdiction.</li>
-                </ul>
+                <textarea
+                  id="remarks-input"
+                  className="w-full flex-1 p-2 border border-gray-300 rounded-md outline-none focus:border-[#1e3a8a] focus:bg-blue-50 focus:ring-1 focus:ring-[#1e3a8a] text-[12px] resize-none text-gray-800 font-medium transition-all"
+                  placeholder="Enter remarks..."
+                ></textarea>
               </div>
-              <div className="flex-1 border-l border-gray-200 pl-6">
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1">
                 <label className="text-[12px] font-semibold text-gray-700 mb-1 block">
-                  Bank / UPI Details
+                  Bank Details
                 </label>
                 <div className="text-[11px] text-gray-600 space-y-1">
                   <p>
@@ -1068,22 +1473,47 @@ const TallyBillingPage = () => {
           </div>
 
           <div className="w-[400px] bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col shrink-0">
-            <div className="p-4 flex flex-col gap-3 flex-1">
+            <div className="p-4 flex flex-col gap-2.5 flex-1">
+              {/* SALE & RETURN SPLIT */}
               <div className="flex justify-between items-center">
                 <span className="text-[12px] font-semibold text-gray-700">
-                  Sub Total
+                  Sales Total
                 </span>
                 <input
                   readOnly
-                  value={subTotal.toFixed(2)}
+                  value={salesTotal.toFixed(2)}
                   className={`${fieldCSS} w-32 text-right bg-gray-50`}
                 />
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-[12px] font-semibold text-gray-700">
-                  (-) Discount
+                  Returns Total
                 </span>
                 <input
+                  readOnly
+                  value={returnsTotal.toFixed(2)}
+                  className={`${fieldCSS} w-32 text-right bg-gray-50 text-red-600`}
+                />
+              </div>
+              <hr className="my-1 border-gray-200" />
+
+              <div className="flex justify-between items-center">
+                <span className="text-[12px] font-bold text-gray-800">
+                  Net Bill (Sale - Return)
+                </span>
+                <input
+                  readOnly
+                  value={netTotal.toFixed(2)}
+                  className={`${fieldCSS} w-32 text-right bg-transparent border-none font-bold text-[13px]`}
+                />
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="text-[12px] font-semibold text-gray-700">
+                  (-) Global Discount
+                </span>
+                <input
+                  id="discount-input"
                   type="text"
                   inputMode="decimal"
                   value={globalDiscount}
@@ -1093,45 +1523,40 @@ const TallyBillingPage = () => {
                   className={`${fieldCSS} w-32 text-right text-[#1e3a8a]`}
                 />
               </div>
+
               <div className="flex justify-between items-center">
                 <span className="text-[12px] font-semibold text-gray-700">
-                  Current Bill
+                  (+) Previous Dues
                 </span>
                 <input
                   readOnly
-                  value={currentBill.toFixed(2)}
-                  className={`${fieldCSS} w-32 text-right bg-gray-50 text-[#1e3a8a]`}
+                  value={prevBalance.toFixed(2)}
+                  className={`${fieldCSS} w-32 text-right bg-gray-50 text-red-600`}
                 />
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[12px] font-semibold text-gray-700">
-                  (+) Previous Balance
-                </span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={prevBalance}
-                  onChange={(e) => setPrevBalance(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  placeholder="0"
-                  className={`${fieldCSS} w-32 text-right text-[#1e3a8a]`}
-                />
-              </div>
+
               <hr className="my-1 border-gray-200" />
-              <div className="flex justify-between items-center bg-blue-50/50 p-2 rounded-md border border-blue-100">
-                <span className="text-[13px] font-bold text-[#1e3a8a]">
-                  Grand Total Due
+
+              <div
+                className={`flex justify-between items-center p-2 rounded-md border ${grandTotal < 0 ? "bg-green-50 border-green-200" : "bg-blue-50/50 border-blue-100"}`}
+              >
+                <span
+                  className={`text-[13px] font-bold ${grandTotal < 0 ? "text-green-700" : "text-[#1e3a8a]"}`}
+                >
+                  {grandTotal < 0
+                    ? "Refund Due To Customer"
+                    : "Grand Total Due"}
                 </span>
                 <input
                   readOnly
-                  value={grandTotal.toFixed(2)}
-                  className={`${fieldCSS} w-32 text-right bg-transparent border-none text-lg`}
+                  value={Math.abs(grandTotal).toFixed(2)}
+                  className={`px-2 py-1 outline-none w-32 text-right bg-transparent border-none text-lg font-bold ${grandTotal < 0 ? "text-green-700" : "text-[#1e3a8a]"}`}
                 />
               </div>
-              <hr className="my-1 border-gray-200" />
-              <div className="flex flex-col gap-2">
+
+              <div className="flex flex-col gap-1.5 mt-1">
                 <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                  Payments Received
+                  {grandTotal < 0 ? "Refund Issued Via" : "Payments Received"}
                 </span>
                 <div className="flex justify-between items-center pl-2">
                   <span className="text-[12px] font-medium text-gray-700">
@@ -1164,52 +1589,67 @@ const TallyBillingPage = () => {
                   />
                 </div>
               </div>
-              <hr className="my-1 border-gray-200" />
-              <div className="flex justify-between items-center">
-                <span className="text-[12px] font-semibold text-gray-700">
-                  Total Paid Now
-                </span>
-                <input
-                  id="total-paid-input"
-                  readOnly
-                  value={totalPaid.toFixed(2)}
-                  className={`${fieldCSS} w-32 text-right bg-transparent border-none text-[13px] text-green-700`}
-                />
-              </div>
             </div>
 
-            <div className="bg-gray-800 text-white px-5 py-3 flex justify-between items-center">
+            <div
+              className={`text-white px-5 py-3 flex justify-between items-center ${closingBalance < 0 ? "bg-green-700" : "bg-gray-800"}`}
+            >
               <span className="text-[13px] font-medium tracking-wide">
-                Closing Balance
+                Closing Balance {closingBalance < 0 && "(Overpaid)"}
               </span>
               <input
                 id="closing-balance-input"
                 readOnly
-                value={closingBalance.toFixed(2)}
+                value={Math.abs(closingBalance).toFixed(2)}
                 className="bg-transparent text-xl font-bold text-white outline-none text-right w-40 cursor-default focus:ring-2 focus:ring-white rounded px-1 transition-shadow"
               />
             </div>
 
             <div className="p-3 bg-gray-100 flex gap-3 rounded-b-lg border-t border-gray-300">
               <button
-                className="flex-1 bg-gray-500 hover:bg-gray-600 focus:ring-2 focus:ring-gray-400 focus:outline-none text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95"
+                id="reset-btn"
+                onClick={resetForm}
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95 outline-none focus:ring-4 focus:ring-gray-300"
                 tabIndex="-1"
               >
-                Reset
+                New Bill / Reset
               </button>
               <button
                 id="save-btn"
-                onClick={handleSaveBill}
-                className="flex-1 bg-[#1e3a8a] hover:bg-blue-800 focus:ring-2 focus:ring-blue-400 focus:outline-none text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95"
+                onClick={() => {
+                  handleSaveBill(false);
+                  // Automatically shift focus to the Print button after saving/updating
+                  setTimeout(
+                    () => document.getElementById("print-btn")?.focus(),
+                    50,
+                  );
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowRight") {
+                    e.preventDefault();
+                    document.getElementById("print-btn")?.focus();
+                  } else if (e.key === "ArrowLeft") {
+                    e.preventDefault();
+                    document.getElementById("reset-btn")?.focus();
+                  }
+                }}
+                // Notice we removed disabled={isSaved} from here
+                className={`flex-1 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95 outline-none focus:ring-4 focus:ring-blue-300 ${isSaved ? "bg-teal-600 hover:bg-teal-700" : "bg-[#1e3a8a] hover:bg-blue-800"}`}
               >
-                Save
+                {isSaved ? "Update ✔" : "Save"}
               </button>
               <button
-                onClick={handleSaveBill}
-                className="flex-[1.5] bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-green-400 focus:outline-none text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95"
-                tabIndex="-1"
+                id="print-btn"
+                onClick={() => handleSaveBill(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft") {
+                    e.preventDefault();
+                    document.getElementById("save-btn")?.focus();
+                  }
+                }}
+                className="flex-[1.5] bg-green-600 hover:bg-green-700 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95 outline-none focus:ring-4 focus:ring-green-300"
               >
-                Save & Print
+                Print
               </button>
             </div>
           </div>
@@ -1228,15 +1668,8 @@ const TallyBillingPage = () => {
           }}
           onKeyDown={(e) => {
             if (e.repeat) return;
-            if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              handleCancelModal();
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              e.stopPropagation();
-              handlePrint();
-            }
+            if (e.key === "Escape") handleCancelModal();
+            else if (e.key === "Enter") handlePrint();
           }}
         >
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
@@ -1253,33 +1686,35 @@ const TallyBillingPage = () => {
             </div>
 
             <div className="p-6 flex-1 overflow-auto bg-gray-200 flex justify-center">
-              <div className="bg-white p-6 shadow-sm w-full max-w-lg border border-gray-300 h-max min-h-full font-mono text-[13px] leading-snug text-black uppercase">
+              <div className="bg-white p-6 shadow-sm w-full max-w-lg border border-gray-300 h-max min-h-full font-mono text-[12px] leading-snug text-black uppercase">
                 <table
                   className="w-full border-collapse"
                   style={{ tableLayout: "fixed" }}
                 >
                   <colgroup>
                     <col style={{ width: "5%" }} />
-                    <col style={{ width: "58%" }} />
-                    <col style={{ width: "10%" }} />
                     <col style={{ width: "12%" }} />
-                    <col style={{ width: "15%" }} />
+                    <col style={{ width: "42%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "17%" }} />
                   </colgroup>
 
                   <thead>
                     <tr>
-                      <td colSpan="5" className="pb-2 border-0 p-0">
-                        {/* Row 1: Bill No, Heading, Date */}
+                      <td colSpan="6" className="pb-2 border-0 p-0">
                         <div className="border-t border-b border-dashed border-black py-1 mb-2 flex justify-between items-center font-bold">
-                          <span className="text-left whitespace-nowrap">
+                          <span className="text-left">
                             BILL NO:{" "}
                             {document.getElementById("bill-no-input")?.value ||
                               "103"}
                           </span>
                           <span className="text-center tracking-wide text-[14px]">
-                            ROUGH ESTIMATE
+                            {returnsTotal < 0 && salesTotal === 0
+                              ? "CREDIT NOTE"
+                              : "TAX INVOICE"}
                           </span>
-                          <span className="text-right whitespace-nowrap">
+                          <span className="text-right">
                             DATE:{" "}
                             {document
                               .getElementById("date-input")
@@ -1289,51 +1724,63 @@ const TallyBillingPage = () => {
                           </span>
                         </div>
 
-                        {/* Row 2: Customer (Left) and Ref (Right) */}
-                        <div className="flex w-full justify-between mb-1">
-                          <span className="w-1/2 text-left truncate pr-2">
-                            CUSTOMER:{" "}
-                            {document.getElementById("customer-name-input")
-                              ?.value || "Walking Customer"}
+                        <div className="flex w-full justify-between mb-2 text-[12px] leading-tight break-words whitespace-normal gap-2">
+                          <div className="w-[60%] flex flex-col items-start pr-1">
+                            <span className="font-bold">
+                              CUSTOMER:{" "}
+                              {document.getElementById("customer-name-input")
+                                ?.value || "Walking Customer"}
+                            </span>
                             {document.getElementById("customer-phone-input")
-                              ?.value
-                              ? ` - ${document.getElementById("customer-phone-input")?.value}`
-                              : ""}
-                          </span>
-                          <span className="w-1/2 text-right truncate pl-2">
-                            REF:{" "}
-                            {document.getElementById("ref-name-input")?.value ||
-                              "N/A"}
-                            {document.getElementById("ref-phone-input")?.value
-                              ? ` - ${document.getElementById("ref-phone-input")?.value}`
-                              : ""}
-                          </span>
-                        </div>
-
-                        {/* Row 3: Last Bill No and Date */}
-                        <div className="flex w-full justify-between mb-2">
-                          <span className="w-1/2 text-left truncate pr-2">
-                            LAST BILL NO:{" "}
-                            {document.getElementById("last-bill-no-input")
-                              ?.value || "N/A"}
-                          </span>
-                          <span className="w-1/2 text-right truncate pl-2">
-                            LAST BILL DT:{" "}
-                            {document.getElementById("last-bill-date-input")
-                              ?.value
-                              ? document
-                                  .getElementById("last-bill-date-input")
-                                  .value.split("-")
-                                  .reverse()
-                                  .join("-")
-                              : "N/A"}
-                          </span>
+                              ?.value && (
+                              <span>
+                                Ph:{" "}
+                                {
+                                  document.getElementById(
+                                    "customer-phone-input",
+                                  )?.value
+                                }
+                              </span>
+                            )}
+                            {document.querySelector(
+                              'input[placeholder="Enter Address..."]',
+                            )?.value && (
+                              <span>
+                                Addr:{" "}
+                                {
+                                  document.querySelector(
+                                    'input[placeholder="Enter Address..."]',
+                                  )?.value
+                                }
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-[40%] flex flex-col items-end pl-1 text-right">
+                            <span className="font-bold">
+                              REF:{" "}
+                              {document.getElementById("ref-name-input")
+                                ?.value || "N/A"}
+                            </span>
+                            {document.getElementById("ref-phone-input")
+                              ?.value && (
+                              <span>
+                                Ph:{" "}
+                                {
+                                  document.getElementById("ref-phone-input")
+                                    ?.value
+                                }
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
                     <tr>
                       <th className="border-t border-b border-dashed border-black py-1 text-left">
                         #
+                      </th>
+                      <th className="border-t border-b border-dashed border-black py-1 text-left">
+                        TYPE
                       </th>
                       <th className="border-t border-b border-dashed border-black py-1 text-left">
                         ITEM DESCRIPTION
@@ -1357,8 +1804,14 @@ const TallyBillingPage = () => {
                           <td className="py-1 align-top text-left">
                             {index + 1}
                           </td>
+                          <td className="py-1 align-top text-left">
+                            {item.mode === "Return" ? "RTN" : "SALE"}
+                          </td>
                           <td className="py-1 pr-2 align-top text-left break-words">
-                            {item.desc}
+                            {item.desc}{" "}
+                            {item.mode === "Return" && item.refBill
+                              ? `(Ref: ${item.refBill})`
+                              : ""}
                           </td>
                           <td className="py-1 text-center align-top">
                             {item.qty || "1"}
@@ -1373,46 +1826,80 @@ const TallyBillingPage = () => {
                       );
                     })}
                     <tr>
-                      <td colSpan="5" className="pt-2 border-0 p-0">
+                      <td colSpan="6" className="pt-2 border-0 p-0">
                         <div className="break-inside-avoid">
                           <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
-                            <div className="flex justify-between w-[60%]">
-                              <span>SUB TOTAL:</span>
-                              <span>{subTotal.toFixed(2)}</span>
+                            <div className="flex justify-between w-[65%]">
+                              <span>SALES TOTAL:</span>
+                              <span>{salesTotal.toFixed(2)}</span>
                             </div>
-                            <div className="flex justify-between mb-1 w-[60%]">
-                              <span>DISCOUNT:</span>
-                              <span>{globalDiscount || "0"}</span>
+                            {returnsTotal < 0 && (
+                              <div className="flex justify-between w-[65%]">
+                                <span>RETURNS TOTAL:</span>
+                                <span>{returnsTotal.toFixed(2)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between mb-1 w-[65%] font-bold">
+                              <span>NET BILL:</span>
+                              <span>{netTotal.toFixed(2)}</span>
                             </div>
+
+                            {globalDiscount > 0 && (
+                              <div className="flex justify-between mb-1 w-[65%]">
+                                <span>DISCOUNT:</span>
+                                <span>{globalDiscount || "0"}</span>
+                              </div>
+                            )}
                           </div>
+
                           <div className="border-t border-dashed border-black pt-1">
                             <div className="flex justify-between">
                               <span>CURRENT BILL AMOUNT:</span>
                               <span>{currentBill.toFixed(2)}</span>
                             </div>
-                            <div className="flex justify-between mb-1">
-                              <span>(+) PREVIOUS BALANCE:</span>
-                              <span>{prevBalance || "0"}</span>
-                            </div>
+
+                            {linkedBills.length > 0 && (
+                              <div className="flex justify-between mb-1">
+                                <span>(+) PREVIOUS DUES:</span>
+                                <span>{prevBalance.toFixed(2)}</span>
+                              </div>
+                            )}
+                            {linkedBills.length > 0 && (
+                              <div className="text-[10px] text-gray-600 flex gap-2 justify-end mb-1">
+                                {linkedBills.map((lb, i) => (
+                                  <span key={i}>
+                                    [{lb.no}: {lb.amount}]
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
+
                           <div className="border-t border-dashed border-black pt-1">
-                            <div className="flex justify-between">
-                              <span>(=) GRAND TOTAL DUE:</span>
-                              <span>{grandTotal.toFixed(2)}</span>
+                            <div className="flex justify-between font-bold text-[13px]">
+                              <span>
+                                {grandTotal < 0
+                                  ? "REFUND DUE:"
+                                  : "GRAND TOTAL DUE:"}
+                              </span>
+                              <span>{Math.abs(grandTotal).toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span>(-) PAID NOW (CASH):</span>
+                              <span>PAID NOW (CASH):</span>
                               <span>{cashPaid || "0"}</span>
                             </div>
-                            {/* NEW UPI FIELD */}
                             <div className="flex justify-between mb-1">
-                              <span>(-) PAID NOW (UPI/BANK):</span>
+                              <span>PAID NOW (UPI/BANK):</span>
                               <span>{upiPaid || "0"}</span>
                             </div>
                           </div>
+
                           <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
                             <span>CLOSING BALANCE:</span>
-                            <span>{closingBalance.toFixed(2)} (PAID)</span>
+                            <span>
+                              {Math.abs(closingBalance).toFixed(2)}{" "}
+                              {closingBalance < 0 && "(OVERPAID)"}
+                            </span>
                           </div>
                         </div>
                       </td>
@@ -1444,35 +1931,37 @@ const TallyBillingPage = () => {
           3. PURE PRINT LAYOUT (Hidden on screen, ONLY visible to printer)
           ===================================================================== */}
       {showSavePopup && (
-        <div className="hidden print:block absolute top-0 left-0 w-[148mm] bg-white text-black px-[10mm] z-[999999] font-mono text-[13px] leading-tight uppercase">
+        <div className="hidden print:block absolute top-0 left-0 w-[148mm] bg-white text-black px-[10mm] z-[999999] font-mono text-[12px] leading-tight uppercase">
           <table
             className="w-full border-collapse"
             style={{ tableLayout: "fixed" }}
           >
             <colgroup>
               <col style={{ width: "5%" }} />
-              <col style={{ width: "58%" }} />
-              <col style={{ width: "10%" }} />
               <col style={{ width: "12%" }} />
-              <col style={{ width: "15%" }} />
+              <col style={{ width: "42%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "17%" }} />
             </colgroup>
 
             <thead className="table-header-group">
               <tr>
-                <td colSpan="5" className="h-[10mm] border-0 p-0"></td>
+                <td colSpan="6" className="h-[10mm] border-0 p-0"></td>
               </tr>
               <tr>
-                <td colSpan="5" className="pb-2 border-0 p-0">
-                  {/* Row 1: Bill No, Heading, Date */}
+                <td colSpan="6" className="pb-2 border-0 p-0">
                   <div className="border-t border-b border-dashed border-black py-1 mb-2 flex justify-between items-center font-bold">
-                    <span className="text-left whitespace-nowrap">
+                    <span className="text-left">
                       BILL NO:{" "}
                       {document.getElementById("bill-no-input")?.value || "103"}
                     </span>
                     <span className="text-center tracking-wide text-[14px]">
-                      ROUGH ESTIMATE
+                      {returnsTotal < 0 && salesTotal === 0
+                        ? "CREDIT NOTE"
+                        : "TAX INVOICE"}
                     </span>
-                    <span className="text-right whitespace-nowrap">
+                    <span className="text-right">
                       DATE:{" "}
                       {document
                         .getElementById("date-input")
@@ -1482,49 +1971,58 @@ const TallyBillingPage = () => {
                     </span>
                   </div>
 
-                  {/* Row 2: Customer (Left) and Ref (Right) */}
-                  <div className="flex w-full justify-between mb-1">
-                    <span className="w-1/2 text-left truncate pr-2">
-                      CUSTOMER:{" "}
-                      {document.getElementById("customer-name-input")?.value ||
-                        "Walking Customer"}
-                      {document.getElementById("customer-phone-input")?.value
-                        ? ` - ${document.getElementById("customer-phone-input")?.value}`
-                        : ""}
-                    </span>
-                    <span className="w-1/2 text-right truncate pl-2">
-                      REF:{" "}
-                      {document.getElementById("ref-name-input")?.value ||
-                        "N/A"}
-                      {document.getElementById("ref-phone-input")?.value
-                        ? ` - ${document.getElementById("ref-phone-input")?.value}`
-                        : ""}
-                    </span>
-                  </div>
-
-                  {/* Row 3: Last Bill No and Date */}
-                  <div className="flex w-full justify-between mb-2">
-                    <span className="w-1/2 text-left truncate pr-2">
-                      LAST BILL NO:{" "}
-                      {document.getElementById("last-bill-no-input")?.value ||
-                        "N/A"}
-                    </span>
-                    <span className="w-1/2 text-right truncate pl-2">
-                      LAST BILL DT:{" "}
-                      {document.getElementById("last-bill-date-input")?.value
-                        ? document
-                            .getElementById("last-bill-date-input")
-                            .value.split("-")
-                            .reverse()
-                            .join("-")
-                        : "N/A"}
-                    </span>
+                  <div className="flex w-full justify-between mb-2 text-[12px] leading-tight break-words whitespace-normal gap-2">
+                    <div className="w-[60%] flex flex-col items-start pr-1">
+                      <span className="font-bold">
+                        CUSTOMER:{" "}
+                        {document.getElementById("customer-name-input")
+                          ?.value || "Walking Customer"}
+                      </span>
+                      {document.getElementById("customer-phone-input")
+                        ?.value && (
+                        <span>
+                          Ph:{" "}
+                          {
+                            document.getElementById("customer-phone-input")
+                              ?.value
+                          }
+                        </span>
+                      )}
+                      {document.querySelector(
+                        'input[placeholder="Enter Address..."]',
+                      )?.value && (
+                        <span>
+                          Addr:{" "}
+                          {
+                            document.querySelector(
+                              'input[placeholder="Enter Address..."]',
+                            )?.value
+                          }
+                        </span>
+                      )}
+                    </div>
+                    <div className="w-[40%] flex flex-col items-end pl-1 text-right">
+                      <span className="font-bold">
+                        REF:{" "}
+                        {document.getElementById("ref-name-input")?.value ||
+                          "N/A"}
+                      </span>
+                      {document.getElementById("ref-phone-input")?.value && (
+                        <span>
+                          Ph:{" "}
+                          {document.getElementById("ref-phone-input")?.value}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </td>
               </tr>
               <tr>
                 <th className="border-t border-b border-dashed border-black py-1 text-left">
                   #
+                </th>
+                <th className="border-t border-b border-dashed border-black py-1 text-left">
+                  TYPE
                 </th>
                 <th className="border-t border-b border-dashed border-black py-1 text-left">
                   ITEM DESCRIPTION
@@ -1547,8 +2045,14 @@ const TallyBillingPage = () => {
                 return (
                   <tr key={item.id} className="break-inside-avoid">
                     <td className="py-1 align-top text-left">{index + 1}</td>
+                    <td className="py-1 align-top text-left">
+                      {item.mode === "Return" ? "RTN" : "SALE"}
+                    </td>
                     <td className="py-1 pr-2 align-top text-left break-words">
-                      {item.desc}
+                      {item.desc}{" "}
+                      {item.mode === "Return" && item.refBill
+                        ? `(Ref: ${item.refBill})`
+                        : ""}
                     </td>
                     <td className="py-1 text-center align-top">
                       {item.qty || "1"}
@@ -1564,16 +2068,29 @@ const TallyBillingPage = () => {
               })}
 
               <tr className="break-inside-avoid">
-                <td colSpan="5" className="pt-2 border-0 p-0">
+                <td colSpan="6" className="pt-2 border-0 p-0">
                   <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
-                    <div className="flex justify-between w-[60%]">
-                      <span>SUB TOTAL:</span>
-                      <span>{subTotal.toFixed(2)}</span>
+                    <div className="flex justify-between w-[65%]">
+                      <span>SALES TOTAL:</span>
+                      <span>{salesTotal.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between mb-1 w-[60%]">
-                      <span>DISCOUNT:</span>
-                      <span>{globalDiscount || "0"}</span>
+                    {returnsTotal < 0 && (
+                      <div className="flex justify-between w-[65%]">
+                        <span>RETURNS TOTAL:</span>
+                        <span>{returnsTotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between mb-1 w-[65%] font-bold">
+                      <span>NET BILL:</span>
+                      <span>{netTotal.toFixed(2)}</span>
                     </div>
+
+                    {globalDiscount > 0 && (
+                      <div className="flex justify-between mb-1 w-[65%]">
+                        <span>DISCOUNT:</span>
+                        <span>{globalDiscount || "0"}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-dashed border-black pt-1">
@@ -1581,31 +2098,47 @@ const TallyBillingPage = () => {
                       <span>CURRENT BILL AMOUNT:</span>
                       <span>{currentBill.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between mb-1">
-                      <span>(+) PREVIOUS BALANCE:</span>
-                      <span>{prevBalance || "0"}</span>
-                    </div>
+
+                    {linkedBills.length > 0 && (
+                      <div className="flex justify-between mb-1">
+                        <span>(+) PREVIOUS DUES:</span>
+                        <span>{prevBalance.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {linkedBills.length > 0 && (
+                      <div className="text-[10px] text-gray-600 flex gap-2 justify-end mb-1">
+                        {linkedBills.map((lb, i) => (
+                          <span key={i}>
+                            [{lb.no}: {lb.amount}]
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-dashed border-black pt-1">
-                    <div className="flex justify-between">
-                      <span>(=) GRAND TOTAL DUE:</span>
-                      <span>{grandTotal.toFixed(2)}</span>
+                    <div className="flex justify-between font-bold text-[13px]">
+                      <span>
+                        {grandTotal < 0 ? "REFUND DUE:" : "GRAND TOTAL DUE:"}
+                      </span>
+                      <span>{Math.abs(grandTotal).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>(-) PAID NOW (CASH):</span>
+                      <span>PAID NOW (CASH):</span>
                       <span>{cashPaid || "0"}</span>
                     </div>
-                    {/* NEW UPI FIELD */}
                     <div className="flex justify-between mb-1">
-                      <span>(-) PAID NOW (UPI/BANK):</span>
+                      <span>PAID NOW (UPI/BANK):</span>
                       <span>{upiPaid || "0"}</span>
                     </div>
                   </div>
 
                   <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
                     <span>CLOSING BALANCE:</span>
-                    <span>{closingBalance.toFixed(2)} (PAID)</span>
+                    <span>
+                      {Math.abs(closingBalance).toFixed(2)}{" "}
+                      {closingBalance < 0 && "(OVERPAID)"}
+                    </span>
                   </div>
                 </td>
               </tr>
@@ -1613,7 +2146,7 @@ const TallyBillingPage = () => {
 
             <tfoot className="table-footer-group">
               <tr>
-                <td colSpan="5" className="h-[10mm] border-0 p-0"></td>
+                <td colSpan="6" className="h-[10mm] border-0 p-0"></td>
               </tr>
             </tfoot>
           </table>
