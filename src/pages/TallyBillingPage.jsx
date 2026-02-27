@@ -69,6 +69,7 @@ const TallyBillingPage = () => {
   ]);
 
   const [showSavePopup, setShowSavePopup] = useState(false);
+  const [customerPastBills, setCustomerPastBills] = useState([]);
 
   // --- DYNAMIC GLOBAL CALCULATIONS ---
   const salesTotal = items
@@ -155,6 +156,14 @@ const TallyBillingPage = () => {
 
     // 2. Clear the dropdown
     setCustomerSuggestionList([]);
+
+    // --- NEW: FETCH PAST BILLS FOR THIS CUSTOMER ---
+    const pastBills = dataForBillList.filter(
+      (b) =>
+        b.customer_name === customer.customer_name &&
+        b.customer_mobile === customer.customer_mobile,
+    );
+    setCustomerPastBills(pastBills);
 
     // 3. Jump focus to the items grid automatically!
     setTimeout(() => {
@@ -326,6 +335,7 @@ const TallyBillingPage = () => {
     ]);
     setLinkedBills([]);
     setCustomerSuggestionList([]);
+    setCustomerPastBills([]); // Clear past bills table
     setGlobalDiscount("");
     setCashPaid("");
     setUpiPaid("");
@@ -1386,14 +1396,16 @@ const TallyBillingPage = () => {
         <div className="flex gap-4 mt-auto">
           <div className="flex-1 flex flex-col gap-4">
             {/* LINKED PREVIOUS BILLS WIDGET */}
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-col gap-3">
+            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-col gap-3 flex-1 overflow-hidden">
               <label className="text-[12px] font-semibold text-gray-700 block uppercase tracking-wider">
                 Link Previous Pending Bills (Dues)
               </label>
-              <div className="flex gap-3 items-center">
+
+              {/* Input Fields & Add Button */}
+              <div className="flex gap-3 items-center shrink-0">
                 <input
                   type="text"
-                  placeholder="Bill No (e.g. INV-102)"
+                  placeholder="Bill No (e.g. 102)"
                   value={linkBillNo}
                   onChange={(e) => setLinkBillNo(e.target.value)}
                   className={`${fieldCSS} w-36 uppercase`}
@@ -1416,9 +1428,141 @@ const TallyBillingPage = () => {
                 </button>
               </div>
 
+              {/* NEW: EXPANDED DYNAMIC PAST BILLS TABLE */}
+              {customerPastBills.length > 0 && (
+                <div className="mt-1 flex-1 overflow-auto border border-gray-200 rounded-md shadow-inner">
+                  <table className="w-full text-left text-[11px] whitespace-nowrap min-w-max">
+                    <thead className="bg-gray-100 sticky top-0 shadow-sm z-10">
+                      <tr>
+                        <th className="p-1.5 border-b font-semibold text-gray-600">
+                          Bill No
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600">
+                          Date
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Sale Total
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Returns
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Net Bill
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-center">
+                          Prev Bills
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Prev Total
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Disc
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Grand Total
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Paid
+                        </th>
+                        <th className="p-1.5 border-b font-semibold text-gray-600 text-right">
+                          Balance
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerPastBills.map((bill, i) => {
+                        const bal = parseFloat(bill.closing_balance) || 0;
+
+                        // 1. SAFE DATE PARSING
+                        let formattedDate = bill.date || "";
+                        if (formattedDate) {
+                          const d = new Date(formattedDate);
+                          if (!isNaN(d)) {
+                            // Formats to standard DD/MM/YYYY
+                            formattedDate = d.toLocaleDateString("en-IN");
+                          }
+                        }
+
+                        // 2. PARSE LINKED BILLS JSON
+                        let prevBillsList = "-";
+                        try {
+                          if (bill.previous_bills) {
+                            const parsedList = JSON.parse(bill.previous_bills);
+                            if (
+                              Array.isArray(parsedList) &&
+                              parsedList.length > 0
+                            ) {
+                              prevBillsList = parsedList
+                                .map((b) => b.id || b.no)
+                                .join(", ");
+                            }
+                          }
+                        } catch (e) {
+                          // Failsafe in case it's not JSON
+                        }
+
+                        return (
+                          <tr
+                            key={i}
+                            className="border-b cursor-pointer hover:bg-blue-100 transition-colors group"
+                            onClick={() => {
+                              setLinkBillNo(String(bill.id));
+                              setLinkBillAmount(Math.abs(bal).toString());
+                              setTimeout(
+                                () =>
+                                  document
+                                    .getElementById("link-bill-amt")
+                                    ?.focus(),
+                                10,
+                              );
+                            }}
+                          >
+                            <td className="p-1.5 font-bold text-[#1e3a8a] group-hover:underline">
+                              {bill.id}
+                            </td>
+                            <td className="p-1.5 text-gray-600">
+                              {formattedDate}
+                            </td>
+                            <td className="p-1.5 text-right text-gray-600">
+                              {bill.sale_total || "0"}
+                            </td>
+                            <td className="p-1.5 text-right text-red-500">
+                              {bill.return_total || "0"}
+                            </td>
+                            <td className="p-1.5 text-right font-medium text-gray-800">
+                              {bill.net_bill || "0"}
+                            </td>
+                            <td className="p-1.5 text-center text-gray-500 font-medium">
+                              {prevBillsList}
+                            </td>
+                            <td className="p-1.5 text-right text-gray-600">
+                              {bill.total_previous_bill || "0"}
+                            </td>
+                            <td className="p-1.5 text-right text-gray-600">
+                              {bill.bill_discount || "0"}
+                            </td>
+                            <td className="p-1.5 text-right font-bold text-gray-800">
+                              {bill.grand_total_due || "0"}
+                            </td>
+                            <td className="p-1.5 text-right text-green-600">
+                              {bill.total_payment || "0"}
+                            </td>
+                            <td
+                              className={`p-1.5 text-right font-bold ${bal > 0 ? "text-red-600" : bal < 0 ? "text-green-600" : "text-gray-500"}`}
+                            >
+                              {bal.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Pilled List of Linked Bills */}
               {linkedBills.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-1">
+                <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-gray-100 shrink-0">
                   {linkedBills.map((lb, i) => (
                     <span
                       key={i}
@@ -1439,22 +1583,23 @@ const TallyBillingPage = () => {
               )}
             </div>
 
-            <div className="flex gap-4 h-full">
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1 flex flex-col">
-                <label className="text-[12px] font-semibold text-gray-700 mb-2 block">
+            {/* REMARKS & BANK DETAILS (Height shrunk down) */}
+            <div className="flex gap-4 shrink-0 h-[100px]">
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 flex-1 flex flex-col">
+                <label className="text-[11px] font-semibold text-gray-700 mb-1 block">
                   Remarks / Warranty
                 </label>
                 <textarea
                   id="remarks-input"
-                  className="w-full flex-1 p-2 border border-gray-300 rounded-md outline-none focus:border-[#1e3a8a] focus:bg-blue-50 focus:ring-1 focus:ring-[#1e3a8a] text-[12px] resize-none text-gray-800 font-medium transition-all"
+                  className="w-full flex-1 p-2 border border-gray-300 rounded outline-none focus:border-[#1e3a8a] focus:bg-blue-50 focus:ring-1 focus:ring-[#1e3a8a] text-[11px] resize-none text-gray-800 font-medium transition-all"
                   placeholder="Enter remarks..."
                 ></textarea>
               </div>
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex-1">
-                <label className="text-[12px] font-semibold text-gray-700 mb-1 block">
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 flex-1">
+                <label className="text-[11px] font-semibold text-gray-700 mb-1 block">
                   Bank Details
                 </label>
-                <div className="text-[11px] text-gray-600 space-y-1">
+                <div className="text-[11px] text-gray-600 space-y-0.5 mt-1">
                   <p>
                     <span className="font-semibold text-gray-800">Bank:</span>{" "}
                     HDFC Bank
