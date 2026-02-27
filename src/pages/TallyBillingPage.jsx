@@ -8,6 +8,7 @@ const TallyBillingPage = () => {
   const [dataForBillList, setDataForBillList] = useState([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
 
+  const [alreadyLinkedBillIds, setAlreadyLinkedBillIds] = useState(new Set());
   const [productSuggestionList, setProductSuggestionList] = useState([]);
   const [activeItemRow, setActiveItemRow] = useState(null);
 
@@ -192,6 +193,25 @@ const TallyBillingPage = () => {
     );
     setCustomerPastBills(pastBills);
 
+    // --- NEW: FIND BILLS THAT HAVE ALREADY BEEN LINKED ---
+    const lockedIds = new Set();
+    pastBills.forEach((bill) => {
+      try {
+        if (bill.previous_bills) {
+          const parsedList = JSON.parse(bill.previous_bills);
+          if (Array.isArray(parsedList)) {
+            parsedList.forEach((lb) => {
+              // Grabs the ID from the previous bill JSON and locks it
+              lockedIds.add(String(lb.id || lb.no));
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing previous bills for lock", e);
+      }
+    });
+    setAlreadyLinkedBillIds(lockedIds);
+
     // --- EXTRACT ALL PAST PURCHASED ITEMS FOR RATE HISTORY ---
     let pastItems = [];
     pastBills.forEach((bill) => {
@@ -268,9 +288,29 @@ const TallyBillingPage = () => {
   // --- LINKED BILLS LOGIC ---
   const handleAddLinkedBill = () => {
     if (linkBillNo.trim() && linkBillAmount) {
+      const billIdStr = String(linkBillNo.trim());
+
+      // 1. Block if already linked in the database
+      if (alreadyLinkedBillIds.has(billIdStr)) {
+        alert(
+          `Bill ${billIdStr} has already been linked and settled in a past transaction!`,
+        );
+        return;
+      }
+
+      // 2. Block if already added to the CURRENT bill below
+      if (
+        linkedBills.some(
+          (b) => String(b.no) === billIdStr || String(b.id) === billIdStr,
+        )
+      ) {
+        alert(`Bill ${billIdStr} is already added below!`);
+        return;
+      }
+
       setLinkedBills([
         ...linkedBills,
-        { no: linkBillNo.trim(), amount: parseFloat(linkBillAmount) },
+        { id: billIdStr, no: billIdStr, amount: parseFloat(linkBillAmount) }, // Storing both id and no for safety
       ]);
       setLinkBillNo("");
       setLinkBillAmount("");
@@ -464,6 +504,7 @@ const TallyBillingPage = () => {
     setCustomerPastBills([]); // Clear past bills table
     setGlobalDiscount("");
     setCustomerPastItems([]); // Clear item history
+    setAlreadyLinkedBillIds(new Set());
     setCashPaid("");
     setUpiPaid("");
     setIsSaved(false); // Unlock saving for the new bill
@@ -1817,15 +1858,16 @@ const TallyBillingPage = () => {
                     <tbody>
                       {customerPastBills.map((bill, i) => {
                         const bal = parseFloat(bill.closing_balance) || 0;
+                        const isAlreadyLinked = alreadyLinkedBillIds.has(
+                          String(bill.id),
+                        );
 
                         // 1. SAFE DATE PARSING
                         let formattedDate = bill.date || "";
                         if (formattedDate) {
                           const d = new Date(formattedDate);
-                          if (!isNaN(d)) {
-                            // Formats to standard DD/MM/YYYY
+                          if (!isNaN(d))
                             formattedDate = d.toLocaleDateString("en-IN");
-                          }
                         }
 
                         // 2. PARSE LINKED BILLS JSON
@@ -1842,15 +1884,16 @@ const TallyBillingPage = () => {
                                 .join(", ");
                             }
                           }
-                        } catch (e) {
-                          // Failsafe in case it's not JSON
-                        }
+                        } catch (e) {}
 
                         return (
                           <tr
                             key={i}
-                            className="border-b cursor-pointer hover:bg-blue-100 transition-colors group"
+                            // NEW: Change styling and disable pointer if linked
+                            className={`border-b transition-colors ${isAlreadyLinked ? "bg-gray-50 opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-blue-100 group"}`}
                             onClick={() => {
+                              if (isAlreadyLinked) return; // Prevent clicking locked rows
+
                               setLinkBillNo(String(bill.id));
                               setLinkBillAmount(Math.abs(bal).toString());
                               setTimeout(
@@ -1862,8 +1905,16 @@ const TallyBillingPage = () => {
                               );
                             }}
                           >
-                            <td className="p-1.5 font-bold text-[#1e3a8a] group-hover:underline">
+                            <td
+                              className={`p-1.5 font-bold ${isAlreadyLinked ? "text-gray-500" : "text-[#1e3a8a] group-hover:underline"}`}
+                            >
                               {bill.id}
+                              {/* NEW: Visual Badge */}
+                              {isAlreadyLinked && (
+                                <span className="ml-2 text-[9px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded font-bold">
+                                  LINKED
+                                </span>
+                              )}
                             </td>
                             <td className="p-1.5 text-gray-600">
                               {formattedDate}
