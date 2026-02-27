@@ -14,16 +14,14 @@ const TallyBillingPage = () => {
 
   // --- REF BILL & RATE HISTORY STATES ---
   const [activeRefRow, setActiveRefRow] = useState(null);
-  const [highlightedRefIndex, setHighlightedRefIndex] = useState(-1); // Starts at -1 (No selection)
+  const [highlightedRefIndex, setHighlightedRefIndex] = useState(-1);
 
   const [customerPastItems, setCustomerPastItems] = useState([]);
-  //const [activeRateRow, setActiveRateRow] = useState(null);
   const [activeHistoryCell, setActiveHistoryCell] = useState({
     row: null,
     col: null,
   });
 
-  // --- ADD THESE 3 NEW ITEMS ---
   const blurTimeoutRef = useRef(null);
 
   // --- CUSTOMER SUGGESTION STATES ---
@@ -40,13 +38,23 @@ const TallyBillingPage = () => {
 
   // --- PAYMENT SUMMARY STATES ---
   const [globalDiscount, setGlobalDiscount] = useState("");
-  const [cashPaid, setCashPaid] = useState("");
-  const [upiPaid, setUpiPaid] = useState("");
+  const [paymentsList, setPaymentsList] = useState([
+    {
+      id: 1,
+      date: new Date().toISOString().split("T")[0],
+      amount: "",
+      mode: "CASH",
+    },
+    {
+      id: 2,
+      date: new Date().toISOString().split("T")[0],
+      amount: "",
+      mode: "UPI/BANK",
+    },
+  ]);
 
-  // --- ADD THESE NEW STATES ---
   const [isSaved, setIsSaved] = useState(false);
   const [billNo, setBillNo] = useState(() => {
-    // Check if we have a saved bill number, otherwise start at 1001
     const savedNo = localStorage.getItem("ge_last_bill_no");
     return savedNo ? (parseInt(savedNo) + 1).toString() : "1001";
   });
@@ -68,14 +76,14 @@ const TallyBillingPage = () => {
   const [items, setItems] = useState([
     {
       id: 1,
-      mode: "Sale", // NEW!
-      refBill: "", // NEW!
+      mode: "Sale",
+      refBill: "",
       desc: "",
       hsn: "",
       stock: 0,
       mrp: "",
       qty: "",
-      unit: "",
+      unit: "Pcs",
       rate: "",
       tax: "",
       disc: "",
@@ -93,7 +101,7 @@ const TallyBillingPage = () => {
 
   const returnsTotal = items
     .filter((i) => i.mode === "Return")
-    .reduce((sum, item) => sum + parseFloat(item.amount || 0), 0); // Is naturally negative
+    .reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
 
   const netTotal = salesTotal + returnsTotal;
   const currentBill = netTotal - (parseFloat(globalDiscount) || 0);
@@ -104,17 +112,18 @@ const TallyBillingPage = () => {
   );
 
   const grandTotal = currentBill + prevBalance;
-  const totalPaid = (parseFloat(cashPaid) || 0) + (parseFloat(upiPaid) || 0);
+  const totalPaid = paymentsList.reduce(
+    (sum, p) => sum + (parseFloat(p.amount) || 0),
+    0,
+  );
   const closingBalance = grandTotal - totalPaid;
 
   const handleHistoryFocus = (index, colName) => {
-    // If the previous cell was trying to close the popup, cancel it!
     if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
     setActiveHistoryCell({ row: index, col: colName });
   };
 
   const handleHistoryBlur = () => {
-    // Start the 250ms closing countdown
     blurTimeoutRef.current = setTimeout(() => {
       setActiveHistoryCell({ row: null, col: null });
     }, 250);
@@ -137,7 +146,6 @@ const TallyBillingPage = () => {
     const searchWords = value.toLowerCase().trim().split(/\s+/);
 
     if (value.length >= 3 && searchWords.length >= 1) {
-      // Lowered to 3 chars for quicker search
       let filteredResults = dataForBillList.filter((item) => {
         const customerNameLowerCase = (item.customer_name || "").toLowerCase();
         return searchWords.every((word) =>
@@ -145,7 +153,6 @@ const TallyBillingPage = () => {
         );
       });
 
-      // Filter out duplicate customers so we don't show the same person 10 times
       const uniqueCustomers = [];
       const seen = new Set();
       for (const item of filteredResults) {
@@ -164,7 +171,6 @@ const TallyBillingPage = () => {
   };
 
   const handleCustomerSelect = (customer) => {
-    // 1. Fill the DOM inputs
     const nameInput = document.getElementById("customer-name-input");
     if (nameInput) nameInput.value = customer.customer_name || "";
 
@@ -182,10 +188,8 @@ const TallyBillingPage = () => {
     const refPhoneInput = document.getElementById("ref-phone-input");
     if (refPhoneInput) refPhoneInput.value = customer.ref_mobile || "";
 
-    // 2. Clear the dropdown
     setCustomerSuggestionList([]);
 
-    // --- NEW: FETCH PAST BILLS FOR THIS CUSTOMER ---
     const pastBills = dataForBillList.filter(
       (b) =>
         b.customer_name === customer.customer_name &&
@@ -193,7 +197,6 @@ const TallyBillingPage = () => {
     );
     setCustomerPastBills(pastBills);
 
-    // --- NEW: FIND BILLS THAT HAVE ALREADY BEEN LINKED ---
     const lockedIds = new Set();
     pastBills.forEach((bill) => {
       try {
@@ -201,7 +204,6 @@ const TallyBillingPage = () => {
           const parsedList = JSON.parse(bill.previous_bills);
           if (Array.isArray(parsedList)) {
             parsedList.forEach((lb) => {
-              // Grabs the ID from the previous bill JSON and locks it
               lockedIds.add(String(lb.id || lb.no));
             });
           }
@@ -212,7 +214,6 @@ const TallyBillingPage = () => {
     });
     setAlreadyLinkedBillIds(lockedIds);
 
-    // --- EXTRACT ALL PAST PURCHASED ITEMS FOR RATE HISTORY ---
     let pastItems = [];
     pastBills.forEach((bill) => {
       try {
@@ -243,18 +244,16 @@ const TallyBillingPage = () => {
     });
     setCustomerPastItems(pastItems);
 
-    // 3. Jump focus to the items grid automatically!
     setTimeout(() => {
       document.querySelector('[data-col="0"]')?.focus();
     }, 10);
   };
 
   const handleCustomerNameKeyDown = (e) => {
-    // If the dropdown is open, intercept the keys!
     if (customerSuggestionList.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        e.stopPropagation(); // Stops the global handleKeyDown from stealing the key
+        e.stopPropagation();
         setHighlightedCustomerIndex((prev) =>
           prev < customerSuggestionList.length - 1 ? prev + 1 : prev,
         );
@@ -281,7 +280,6 @@ const TallyBillingPage = () => {
         return;
       }
     }
-    // If dropdown is closed, just run the mandatory red-flash check
     enforceMandatory(e);
   };
 
@@ -290,7 +288,6 @@ const TallyBillingPage = () => {
     if (linkBillNo.trim() && linkBillAmount) {
       const billIdStr = String(linkBillNo.trim());
 
-      // 1. Block if already linked in the database
       if (alreadyLinkedBillIds.has(billIdStr)) {
         alert(
           `Bill ${billIdStr} has already been linked and settled in a past transaction!`,
@@ -298,7 +295,6 @@ const TallyBillingPage = () => {
         return;
       }
 
-      // 2. Block if already added to the CURRENT bill below
       if (
         linkedBills.some(
           (b) => String(b.no) === billIdStr || String(b.id) === billIdStr,
@@ -310,7 +306,7 @@ const TallyBillingPage = () => {
 
       setLinkedBills([
         ...linkedBills,
-        { id: billIdStr, no: billIdStr, amount: parseFloat(linkBillAmount) }, // Storing both id and no for safety
+        { id: billIdStr, no: billIdStr, amount: parseFloat(linkBillAmount) },
       ]);
       setLinkBillNo("");
       setLinkBillAmount("");
@@ -334,9 +330,7 @@ const TallyBillingPage = () => {
   }, [highlightedIndex, activeItemRow, productSuggestionList]);
 
   // --- SAVE AND PRINT LOGIC ---
-  // --- UPDATED SAVE/PRINT LOGIC ---
   const handleSaveBill = async (isPrintAction = false) => {
-    // 1. IF CLICKING PRINT AND ALREADY SAVED, JUST OPEN PREVIEW
     if (isPrintAction && isSaved) {
       setShowSavePopup(true);
       return;
@@ -365,23 +359,20 @@ const TallyBillingPage = () => {
       return;
     }
 
-    // --- NEW: PRO-RATA DISCOUNT & SCHEMA MAPPING ---
-    // Calculate the global discount ratio (how much of the net bill is discounted)
     const discountAmount = parseFloat(globalDiscount) || 0;
     const discountRatio = netTotal > 0 ? discountAmount / netTotal : 0;
 
     const formattedItems = validItems.map((item) => {
       const amt = parseFloat(item.amount) || 0;
-      const q = Math.abs(parseFloat(item.qty) || 1); // Prevent divide by zero
+      const q = Math.abs(parseFloat(item.qty) || 1);
 
-      // Pro-rata math
       const itemShareOfDiscount = amt * discountRatio;
       const effectiveAmount = amt - itemShareOfDiscount;
       const refundRate = effectiveAmount / q;
-      const refundPct = discountRatio * -100; // Negative percentage as requested
+      const refundPct = discountRatio * -100;
 
       return {
-        type: item.mode.toLowerCase(), // "sale" or "return"
+        type: item.mode.toLowerCase(),
         id: String(item.id),
         desc: item.desc,
         hsn: item.hsn,
@@ -394,12 +385,21 @@ const TallyBillingPage = () => {
         amount: amt,
         refund_percentage: parseFloat(refundPct.toFixed(2)),
         refund_rate: parseFloat(refundRate.toFixed(2)),
-        bill_id: String(billNo), // The current bill being saved
+        bill_id: String(billNo),
         stock_action: item.mode === "Return" ? "add" : "subtract",
         is_adjustment: false,
-        ref_bill: item.refBill || "", // Keeping this so you know original invoice for returns!
+        ref_bill: item.refBill || "",
       };
     });
+
+    const formattedPayments = paymentsList
+      .filter((p) => parseFloat(p.amount) > 0)
+      .map((p, index) => ({
+        id: String(index + 1),
+        date: p.date.split("-").reverse().join("-"),
+        amount: parseFloat(p.amount),
+        mode: p.mode,
+      }));
 
     const payload = {
       billNo: billNo,
@@ -409,7 +409,7 @@ const TallyBillingPage = () => {
       customerAddress: customerAddress,
       refName: document.getElementById("ref-name-input")?.value.trim() || "",
       refPhone: document.getElementById("ref-phone-input")?.value.trim() || "",
-      items: formattedItems, // Send the newly formatted array!
+      items: formattedItems,
       salesTotal: salesTotal,
       returnsTotal: returnsTotal,
       netTotal: netTotal,
@@ -417,27 +417,24 @@ const TallyBillingPage = () => {
       prevBalance: prevBalance,
       globalDiscount: globalDiscount || 0,
       grandTotal: grandTotal,
-      payments: { cash: cashPaid || 0, upi: upiPaid || 0 },
+      payments: formattedPayments,
       totalPayment: totalPaid,
       closingBalance: closingBalance,
       remarks: document.getElementById("remarks-input")?.value || "",
     };
 
-    // 2. OPTIMISTIC UI: Open print preview INSTANTLY before waiting for Google Sheets
     if (isPrintAction) {
       setShowSavePopup(true);
     }
 
-    // 3. Lock the bill to prevent duplicate saves
     setIsSaved(true);
-    localStorage.setItem("ge_last_bill_no", billNo); // Remember this number
+    localStorage.setItem("ge_last_bill_no", billNo);
 
-    // 4. Fire the save to Google Sheets in the background!
     dataContext.saveBillToSheet(payload).then((result) => {
       if (!result?.success) {
         console.error("Background save failed:", result?.error);
         alert("Warning: Failed to save to Google Sheets.");
-        setIsSaved(false); // Unlock if it failed so they can try again
+        setIsSaved(false);
       } else if (!isPrintAction) {
         alert("Bill saved successfully!");
       }
@@ -453,7 +450,6 @@ const TallyBillingPage = () => {
     if (hTax !== undefined && hTax !== null) row.tax = hTax;
     if (hMrp !== undefined && hMrp !== null) row.mrp = hMrp;
 
-    // Recalculate Math
     const q = Math.abs(parseFloat(row.qty) || 0);
     const r = parseFloat(row.rate) || 0;
     const t = parseFloat(row.tax) || 0;
@@ -468,7 +464,6 @@ const TallyBillingPage = () => {
     setItems(newItems);
     setActiveHistoryCell({ row: null, col: null });
 
-    // Jump to Amount to confirm
     setTimeout(() => {
       document
         .querySelector(`input[data-row="${rowIndex}"][data-col="10"]`)
@@ -476,12 +471,9 @@ const TallyBillingPage = () => {
     }, 10);
   };
 
-  // --- NEW RESET FUNCTION ---
   const resetForm = () => {
-    // Bump Bill Number
     setBillNo((prev) => (parseInt(prev) + 1).toString());
 
-    // Reset Data
     setItems([
       {
         id: Date.now(),
@@ -501,15 +493,28 @@ const TallyBillingPage = () => {
     ]);
     setLinkedBills([]);
     setCustomerSuggestionList([]);
-    setCustomerPastBills([]); // Clear past bills table
+    setCustomerPastBills([]);
     setGlobalDiscount("");
-    setCustomerPastItems([]); // Clear item history
+    setCustomerPastItems([]);
     setAlreadyLinkedBillIds(new Set());
-    setCashPaid("");
-    setUpiPaid("");
-    setIsSaved(false); // Unlock saving for the new bill
 
-    // Clear Inputs
+    setPaymentsList([
+      {
+        id: 1,
+        date: new Date().toISOString().split("T")[0],
+        amount: "",
+        mode: "CASH",
+      },
+      {
+        id: 2,
+        date: new Date().toISOString().split("T")[0],
+        amount: "",
+        mode: "UPI/BANK",
+      },
+    ]);
+
+    setIsSaved(false);
+
     document.getElementById("customer-name-input").value = "";
     document.getElementById("customer-phone-input").value = "";
     const addr = document.querySelector(
@@ -540,7 +545,6 @@ const TallyBillingPage = () => {
     }, 10);
   };
 
-  // --- 2. GLOBAL KEYBOARD NAVIGATION ---
   const handleKeyDown = (e) => {
     if (showSavePopup) return;
 
@@ -554,9 +558,8 @@ const TallyBillingPage = () => {
     const target = e.target;
     const currentId = target.id;
 
-    // --- NEW FIX: Let buttons handle their own Enter key naturally! ---
     if (target.tagName === "BUTTON" && e.key === "Enter") {
-      return; // Stop the global handler from swallowing the click
+      return;
     }
 
     if (currentId === "remarks-input") {
@@ -566,7 +569,7 @@ const TallyBillingPage = () => {
       ) {
         e.preventDefault();
         document
-          .querySelector(`input[data-row="${items.length - 1}"][data-col="10"]`) // Jump to Amount col
+          .querySelector(`input[data-row="${items.length - 1}"][data-col="10"]`)
           ?.focus();
         return;
       }
@@ -596,7 +599,6 @@ const TallyBillingPage = () => {
       }
       if (["Enter", "ArrowRight", "ArrowDown"].includes(e.key)) {
         e.preventDefault();
-        // Move focus to the Save button instead of instantly saving
         document.getElementById("save-btn")?.focus();
         return;
       }
@@ -618,7 +620,7 @@ const TallyBillingPage = () => {
     let nextIndex = currentIndex;
 
     if (e.key === "Enter") {
-      if (currentId === "link-bill-amt") return; // Prevent skipping when adding linked bill
+      if (currentId === "link-bill-amt") return;
       e.preventDefault();
       nextIndex = currentIndex + 1;
     } else if (!isTableInput) {
@@ -660,7 +662,6 @@ const TallyBillingPage = () => {
     updateItem(rowIndex, "unit", selectedUnit);
     setActiveUnitRow(null);
 
-    // Jumps to Tax % (col 9) after selecting Unit
     setTimeout(() => {
       document
         .querySelector(`input[data-row="${rowIndex}"][data-col="9"]`)
@@ -668,7 +669,6 @@ const TallyBillingPage = () => {
     }, 10);
   };
 
-  // --- 3. MANDATORY FIELD VALIDATION ---
   const enforceMandatory = (e) => {
     const navKeys = [
       "Enter",
@@ -688,7 +688,6 @@ const TallyBillingPage = () => {
     }
   };
 
-  // --- 4. TABLE SPECIFIC NAVIGATION (Grid System) ---
   const handleTableArrowKeys = (e) => {
     if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key))
       return;
@@ -744,7 +743,6 @@ const TallyBillingPage = () => {
     const isDropdownOpen =
       activeItemRow === index && productSuggestionList.length > 0;
 
-    // --- 1. NEW: DROPDOWN KEYBOARD NAVIGATION ---
     if (isDropdownOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -778,7 +776,6 @@ const TallyBillingPage = () => {
       }
     }
 
-    // --- 2. EXISTING LOGIC (If dropdown is closed) ---
     if (e.key === "Enter" && isDescEmpty) {
       e.preventDefault();
       e.stopPropagation();
@@ -832,7 +829,7 @@ const TallyBillingPage = () => {
         setTimeout(
           () =>
             document
-              .querySelector(`[data-row="${index + 1}"][data-col="0"]`) // Jumps to Mode Select
+              .querySelector(`[data-row="${index + 1}"][data-col="0"]`)
               ?.focus(),
           10,
         );
@@ -840,7 +837,6 @@ const TallyBillingPage = () => {
     }
   };
 
-  // --- WHEN A PRODUCT IS SELECTED ---
   const handleProductSelect = (rowIndex, product) => {
     const newItems = [...items];
 
@@ -858,7 +854,6 @@ const TallyBillingPage = () => {
     newItems[rowIndex].rate = product.sale || product.mrp || "";
     newItems[rowIndex].qty = "1";
 
-    // Amount Calculation (Respects Mode)
     const q = 1;
     const r = parseFloat(newItems[rowIndex].rate) || 0;
     const t = parseFloat(newItems[rowIndex].tax) || 0;
@@ -874,7 +869,6 @@ const TallyBillingPage = () => {
     setProductSuggestionList([]);
     setActiveItemRow(null);
 
-    // Jumps to col 3 (HSN)
     setTimeout(() => {
       document
         .querySelector(`input[data-row="${rowIndex}"][data-col="3"]`)
@@ -882,21 +876,16 @@ const TallyBillingPage = () => {
     }, 10);
   };
 
-  // --- THE MASTER MATH ENGINE ---
   const updateItem = (index, field, value) => {
-    // 1. CAPTURE THE OLD UNIT BEFORE WE UPDATE STATE
     const oldUnit = items[index].unit;
-
     const newItems = [...items];
     newItems[index][field] = value;
     const row = newItems[index];
 
-    // Clear Ref Bill if swapped back to Sale
     if (field === "mode" && value === "Sale") {
       row.refBill = "";
     }
 
-    // 1. UNIT SWAP: Change rate based on Unit
     if (field === "unit") {
       const typedUnit = value.toLowerCase().trim();
       const prevUnit = (oldUnit || "").toLowerCase().trim();
@@ -912,7 +901,6 @@ const TallyBillingPage = () => {
       }
     }
 
-    // 2. DISCOUNT LOGIC: Calculate Rate from MRP - Disc%
     if (field === "disc" || field === "mrp") {
       const d = parseFloat(row.disc) || 0;
       const m = parseFloat(row.mrp) || 0;
@@ -929,9 +917,7 @@ const TallyBillingPage = () => {
       }
     }
 
-    // 3. FINAL AMOUNT CALCULATION: Qty * (Rate + Tax)
     if (["qty", "rate", "disc", "tax", "mrp", "unit", "mode"].includes(field)) {
-      // Force positive quantity internally to prevent double negatives
       const q = Math.abs(parseFloat(row.qty) || 0);
       const r = parseFloat(row.rate) || 0;
       const t = parseFloat(row.tax) || 0;
@@ -939,7 +925,6 @@ const TallyBillingPage = () => {
       const rateWithTax = r + (r * t) / 100;
       let finalAmount = q * rateWithTax;
 
-      // Smart Return Math
       if (row.mode === "Return") {
         finalAmount = -Math.abs(finalAmount);
       } else {
@@ -947,11 +932,25 @@ const TallyBillingPage = () => {
       }
 
       row.amount = finalAmount.toFixed(2);
+    } else if (field === "amount") {
+      // REVERSE MATH
+      row.amount = value;
+
+      const parsedAmt = parseFloat(value);
+      if (!isNaN(parsedAmt) && parsedAmt !== 0) {
+        const amt = Math.abs(parsedAmt);
+        const q = Math.abs(parseFloat(row.qty) || 1);
+        const t = parseFloat(row.tax) || 0;
+
+        const calcRate = amt / (q * (1 + t / 100));
+        row.rate = calcRate.toFixed(2);
+      } else {
+        row.rate = "";
+      }
     }
 
     setItems(newItems);
 
-    // --- ITEM SEARCH LOGIC ---
     if (field == "desc") {
       const searchWords = value.toLowerCase().trim().split(/\s+/);
 
@@ -1019,7 +1018,6 @@ const TallyBillingPage = () => {
         onKeyDown={handleKeyDown}
         className="flex flex-col min-h-full p-4 gap-4 w-full outline-none print:hidden print-hidden-all"
       >
-        {/* Top Form Bar (Cleaned Up!) */}
         <div className="flex flex-col gap-4 p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col">
@@ -1055,7 +1053,6 @@ const TallyBillingPage = () => {
                 autoComplete="off"
               />
 
-              {/* --- CUSTOMER SUGGESTION DROPDOWN --- */}
               {customerSuggestionList.length > 0 && (
                 <div className="absolute top-[100%] left-0 w-full min-w-[300px] bg-white border border-gray-300 shadow-2xl rounded-b-md z-50 max-h-60 overflow-y-auto mt-1">
                   {customerSuggestionList.map((customer, i) => (
@@ -1161,7 +1158,6 @@ const TallyBillingPage = () => {
           </div>
         </div>
 
-        {/* Dynamic Table */}
         <div className="w-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
           <div className="w-full h-[320px] overflow-auto relative">
             <table className="w-full text-left border-collapse min-w-max">
@@ -1221,7 +1217,6 @@ const TallyBillingPage = () => {
                       {index + 1}
                     </td>
 
-                    {/* Col 0: Mode Dropdown */}
                     <td className="p-1 border-r border-gray-200">
                       <select
                         data-row={index}
@@ -1237,7 +1232,6 @@ const TallyBillingPage = () => {
                       </select>
                     </td>
 
-                    {/* Col 1: Ref Bill (Not Mandatory, Smart Enter Key) */}
                     <td className="p-1 border-r border-gray-200 relative">
                       <input
                         data-row={index}
@@ -1280,7 +1274,6 @@ const TallyBillingPage = () => {
                               return;
                             }
                             if (e.key === "Enter") {
-                              // ONLY intercept Enter if they actually highlighted a row
                               if (
                                 highlightedRefIndex >= 0 &&
                                 filteredBills[highlightedRefIndex]
@@ -1295,7 +1288,6 @@ const TallyBillingPage = () => {
                                 setActiveRefRow(null);
                                 return;
                               }
-                              // If nothing is highlighted (-1), let it naturally jump to the next cell!
                               setActiveRefRow(null);
                             }
                             if (e.key === "Escape") {
@@ -1303,14 +1295,12 @@ const TallyBillingPage = () => {
                               return;
                             }
                           }
-                          // Notice enforceMandatory is REMOVED from here!
                         }}
                         className={`${tableInputCSS} uppercase bg-white font-bold text-[#1e3a8a]`}
                         placeholder="INV-..."
                         autoComplete="off"
                       />
 
-                      {/* Ref Bill Dropdown */}
                       {activeRefRow === index &&
                         customerPastBills.length > 0 && (
                           <div className="absolute top-[100%] left-0 w-[120px] bg-white border border-gray-300 shadow-xl rounded-b-md z-50 overflow-hidden">
@@ -1346,7 +1336,6 @@ const TallyBillingPage = () => {
                         )}
                     </td>
 
-                    {/* Col 2: Desc */}
                     <td className="p-1 border-r border-gray-200 relative">
                       <input
                         id={`desc-${index}`}
@@ -1415,7 +1404,6 @@ const TallyBillingPage = () => {
                         )}
                     </td>
 
-                    {/* Col 3: HSN */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -1429,12 +1417,10 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Plain Text: Stock */}
                     <td className="p-1 border-r border-gray-200 px-2 text-[12px] text-gray-500 bg-transparent text-center">
                       {item.stock}
                     </td>
 
-                    {/* Col 4: Qty */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -1453,7 +1439,6 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 5: MRP */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -1471,7 +1456,6 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 6: Disc % */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -1489,7 +1473,6 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 7: Rate & MASTER HISTORY POPUP */}
                     <td className="p-1 border-r border-gray-200 relative">
                       <input
                         data-row={index}
@@ -1508,7 +1491,6 @@ const TallyBillingPage = () => {
                         autoComplete="off"
                       />
 
-                      {/* --- MASTER PRICE & PRO-RATA HISTORY DROPDOWN --- */}
                       {activeHistoryCell.row === index &&
                         ["qty", "mrp", "disc", "rate", "tax"].includes(
                           activeHistoryCell.col,
@@ -1526,7 +1508,6 @@ const TallyBillingPage = () => {
                               {customerPastItems
                                 .filter((p) => p.desc === item.desc)
                                 .map((hist, i) => {
-                                  // Check if this specific purchase is the one they entered in the Ref Bill cell
                                   const isExactRefMatch =
                                     item.mode === "Return" &&
                                     String(hist.billNo) ===
@@ -1556,7 +1537,6 @@ const TallyBillingPage = () => {
                                       </div>
 
                                       <div className="flex justify-between items-stretch mt-1 gap-2">
-                                        {/* Standard Rate Button */}
                                         <button
                                           tabIndex="-1"
                                           onClick={() =>
@@ -1581,7 +1561,6 @@ const TallyBillingPage = () => {
                                           </div>
                                         </button>
 
-                                        {/* Pro-Rata Refund Button (Only shows if they got a global discount on that bill) */}
                                         {hist.refund_rate !== undefined &&
                                           hist.refund_rate !== hist.rate && (
                                             <button
@@ -1623,7 +1602,6 @@ const TallyBillingPage = () => {
                         )}
                     </td>
 
-                    {/* Col 8: Unit */}
                     <td className="p-1 border-r border-gray-200 relative">
                       {(() => {
                         const availableUnits = [
@@ -1731,7 +1709,6 @@ const TallyBillingPage = () => {
                       })()}
                     </td>
 
-                    {/* Col 9: Tax % */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
@@ -1749,19 +1726,19 @@ const TallyBillingPage = () => {
                       />
                     </td>
 
-                    {/* Col 10: Amount */}
                     <td className="p-1 border-r border-gray-200">
                       <input
                         data-row={index}
                         data-col="10"
                         value={item.amount}
-                        readOnly
+                        onChange={(e) =>
+                          updateItem(index, "amount", e.target.value)
+                        }
                         onKeyDown={(e) => handleLastColumnKeyDown(e, index)}
                         className={`${tableInputCSS} font-bold text-right ${item.mode === "Return" ? "text-red-700" : "text-gray-900"}`}
                       />
                     </td>
 
-                    {/* Delete Row */}
                     <td className="p-1 text-center">
                       <button
                         onClick={() => deleteItem(index)}
@@ -1778,16 +1755,13 @@ const TallyBillingPage = () => {
           </div>
         </div>
 
-        {/* Bottom Section */}
         <div className="flex gap-4 mt-auto">
           <div className="flex-1 flex flex-col gap-4">
-            {/* LINKED PREVIOUS BILLS WIDGET */}
             <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-col gap-3 flex-1 overflow-hidden">
               <label className="text-[12px] font-semibold text-gray-700 block uppercase tracking-wider">
                 Link Previous Pending Bills (Dues)
               </label>
 
-              {/* Input Fields & Add Button */}
               <div className="flex gap-3 items-center shrink-0">
                 <input
                   type="text"
@@ -1814,7 +1788,6 @@ const TallyBillingPage = () => {
                 </button>
               </div>
 
-              {/* NEW: EXPANDED DYNAMIC PAST BILLS TABLE */}
               {customerPastBills.length > 0 && (
                 <div className="mt-1 flex-1 overflow-auto border border-gray-200 rounded-md shadow-inner">
                   <table className="w-full text-left text-[11px] whitespace-nowrap min-w-max">
@@ -1862,7 +1835,6 @@ const TallyBillingPage = () => {
                           String(bill.id),
                         );
 
-                        // 1. SAFE DATE PARSING
                         let formattedDate = bill.date || "";
                         if (formattedDate) {
                           const d = new Date(formattedDate);
@@ -1870,7 +1842,6 @@ const TallyBillingPage = () => {
                             formattedDate = d.toLocaleDateString("en-IN");
                         }
 
-                        // 2. PARSE LINKED BILLS JSON
                         let prevBillsList = "-";
                         try {
                           if (bill.previous_bills) {
@@ -1889,10 +1860,9 @@ const TallyBillingPage = () => {
                         return (
                           <tr
                             key={i}
-                            // NEW: Change styling and disable pointer if linked
                             className={`border-b transition-colors ${isAlreadyLinked ? "bg-gray-50 opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-blue-100 group"}`}
                             onClick={() => {
-                              if (isAlreadyLinked) return; // Prevent clicking locked rows
+                              if (isAlreadyLinked) return;
 
                               setLinkBillNo(String(bill.id));
                               setLinkBillAmount(Math.abs(bal).toString());
@@ -1909,7 +1879,6 @@ const TallyBillingPage = () => {
                               className={`p-1.5 font-bold ${isAlreadyLinked ? "text-gray-500" : "text-[#1e3a8a] group-hover:underline"}`}
                             >
                               {bill.id}
-                              {/* NEW: Visual Badge */}
                               {isAlreadyLinked && (
                                 <span className="ml-2 text-[9px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded font-bold">
                                   LINKED
@@ -1956,7 +1925,6 @@ const TallyBillingPage = () => {
                 </div>
               )}
 
-              {/* Pilled List of Linked Bills */}
               {linkedBills.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-auto pt-2 border-t border-gray-100 shrink-0">
                   {linkedBills.map((lb, i) => (
@@ -1979,7 +1947,6 @@ const TallyBillingPage = () => {
               )}
             </div>
 
-            {/* REMARKS & BANK DETAILS (Height shrunk down) */}
             <div className="flex gap-4 shrink-0 h-[100px]">
               <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 flex-1 flex flex-col">
                 <label className="text-[11px] font-semibold text-gray-700 mb-1 block">
@@ -2015,7 +1982,6 @@ const TallyBillingPage = () => {
 
           <div className="w-[400px] bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col shrink-0">
             <div className="p-4 flex flex-col gap-2.5 flex-1">
-              {/* SALE & RETURN SPLIT */}
               <div className="flex justify-between items-center">
                 <span className="text-[12px] font-semibold text-gray-700">
                   Sales Total
@@ -2095,40 +2061,78 @@ const TallyBillingPage = () => {
                 />
               </div>
 
+              {/* DYNAMIC MULTI-PAYMENT SECTION */}
               <div className="flex flex-col gap-1.5 mt-1">
-                <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                  {grandTotal < 0 ? "Refund Issued Via" : "Payments Received"}
-                </span>
-                <div className="flex justify-between items-center pl-2">
-                  <span className="text-[12px] font-medium text-gray-700">
-                    Cash
+                <div className="flex justify-between items-center pb-1 border-b border-gray-200">
+                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    {grandTotal < 0 ? "Refund Issued Via" : "Payments Received"}
                   </span>
-                  <input
-                    id="cash-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={cashPaid}
-                    onChange={(e) => setCashPaid(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    placeholder="0"
-                    className={`${fieldCSS} w-28 text-right`}
-                  />
+                  <button
+                    onClick={() =>
+                      setPaymentsList([
+                        ...paymentsList,
+                        {
+                          id: Date.now(),
+                          date: new Date().toISOString().split("T")[0],
+                          amount: "",
+                          mode: "UPI/BANK",
+                        },
+                      ])
+                    }
+                    className="text-[#1e3a8a] bg-blue-100 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold transition-colors"
+                    tabIndex="-1"
+                  >
+                    + Add
+                  </button>
                 </div>
-                <div className="flex justify-between items-center pl-2">
-                  <span className="text-[12px] font-medium text-gray-700">
-                    UPI / Bank
-                  </span>
-                  <input
-                    id="upi-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={upiPaid}
-                    onChange={(e) => setUpiPaid(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    placeholder="0"
-                    className={`${fieldCSS} w-28 text-right`}
-                  />
-                </div>
+                {paymentsList.map((p, i) => (
+                  <div key={p.id} className="flex gap-1 items-center">
+                    <input
+                      type="date"
+                      value={p.date}
+                      onChange={(e) => {
+                        const newP = [...paymentsList];
+                        newP[i].date = e.target.value;
+                        setPaymentsList(newP);
+                      }}
+                      className={`${fieldCSS} w-[100px] p-1 text-[11px]`}
+                    />
+                    <select
+                      value={p.mode}
+                      onChange={(e) => {
+                        const newP = [...paymentsList];
+                        newP[i].mode = e.target.value;
+                        setPaymentsList(newP);
+                      }}
+                      className={`${fieldCSS} w-[80px] p-1 text-[11px]`}
+                    >
+                      <option value="CASH">CASH</option>
+                      <option value="UPI/BANK">UPI/BANK</option>
+                      <option value="CARD">CARD</option>
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={p.amount}
+                      onChange={(e) => {
+                        const newP = [...paymentsList];
+                        newP[i].amount = e.target.value;
+                        setPaymentsList(newP);
+                      }}
+                      className={`${fieldCSS} flex-1 text-right p-1 text-[12px] font-bold`}
+                    />
+                    <X
+                      size={16}
+                      onClick={() =>
+                        setPaymentsList(
+                          paymentsList.filter((item) => item.id !== p.id),
+                        )
+                      }
+                      className="text-red-400 hover:text-red-600 cursor-pointer ml-1"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -2159,7 +2163,6 @@ const TallyBillingPage = () => {
                 id="save-btn"
                 onClick={() => {
                   handleSaveBill(false);
-                  // Automatically shift focus to the Print button after saving/updating
                   setTimeout(
                     () => document.getElementById("print-btn")?.focus(),
                     50,
@@ -2174,7 +2177,6 @@ const TallyBillingPage = () => {
                     document.getElementById("reset-btn")?.focus();
                   }
                 }}
-                // Notice we removed disabled={isSaved} from here
                 className={`flex-1 text-white text-[13px] font-semibold py-2.5 rounded-md shadow-sm transition-colors active:scale-95 outline-none focus:ring-4 focus:ring-blue-300 ${isSaved ? "bg-teal-600 hover:bg-teal-700" : "bg-[#1e3a8a] hover:bg-blue-800"}`}
               >
                 {isSaved ? "Update ✔" : "Save"}
@@ -2234,16 +2236,15 @@ const TallyBillingPage = () => {
                 >
                   <colgroup>
                     <col style={{ width: "5%" }} />
-                    <col style={{ width: "12%" }} />
-                    <col style={{ width: "42%" }} />
-                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "50%" }} />
+                    <col style={{ width: "14%" }} />
                     <col style={{ width: "14%" }} />
                     <col style={{ width: "17%" }} />
                   </colgroup>
 
                   <thead>
                     <tr>
-                      <td colSpan="6" className="pb-2 border-0 p-0">
+                      <td colSpan="5" className="pb-2 border-0 p-0">
                         <div className="border-t border-b border-dashed border-black py-1 mb-2 flex justify-between items-center font-bold">
                           <span className="text-left">
                             BILL NO:{" "}
@@ -2253,7 +2254,7 @@ const TallyBillingPage = () => {
                           <span className="text-center tracking-wide text-[14px]">
                             {returnsTotal < 0 && salesTotal === 0
                               ? "CREDIT NOTE"
-                              : "TAX INVOICE"}
+                              : "INVOICE"}
                           </span>
                           <span className="text-right">
                             DATE:{" "}
@@ -2321,13 +2322,10 @@ const TallyBillingPage = () => {
                         #
                       </th>
                       <th className="border-t border-b border-dashed border-black py-1 text-left">
-                        TYPE
-                      </th>
-                      <th className="border-t border-b border-dashed border-black py-1 text-left">
                         ITEM DESCRIPTION
                       </th>
                       <th className="border-t border-b border-dashed border-black py-1 text-center">
-                        QTY
+                        QTY / UNIT
                       </th>
                       <th className="border-t border-b border-dashed border-black py-1 text-right">
                         RATE
@@ -2338,36 +2336,91 @@ const TallyBillingPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item, index) => {
-                      if (item.desc.trim() === "") return null;
-                      return (
-                        <tr key={item.id} className="break-inside-avoid">
+                    {/* --- SALE ITEMS --- */}
+                    {items.filter(
+                      (i) => i.mode === "Sale" && i.desc.trim() !== "",
+                    ).length > 0 && (
+                      <tr>
+                        <td
+                          colSpan="5"
+                          className="py-1 font-bold underline text-left"
+                        >
+                          SALE
+                        </td>
+                      </tr>
+                    )}
+                    {items
+                      .filter((i) => i.mode === "Sale" && i.desc.trim() !== "")
+                      .map((item, index) => (
+                        <tr
+                          key={`sale-${item.id}`}
+                          className="break-inside-avoid"
+                        >
                           <td className="py-1 align-top text-left">
                             {index + 1}
                           </td>
+                          <td className="py-1 pr-2 align-top text-left break-words">
+                            {item.desc}
+                          </td>
+                          <td className="py-1 text-center align-top">
+                            {item.qty || "1"} {item.unit}
+                          </td>
+                          <td className="py-1 text-right align-top">
+                            {(
+                              Math.abs(item.amount) / Math.abs(item.qty || 1)
+                            ).toFixed(2)}
+                          </td>
+                          <td className="py-1 text-right align-top">
+                            {Math.abs(item.amount).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+
+                    {/* --- RETURN ITEMS --- */}
+                    {items.filter(
+                      (i) => i.mode === "Return" && i.desc.trim() !== "",
+                    ).length > 0 && (
+                      <tr>
+                        <td
+                          colSpan="5"
+                          className="py-1 pt-3 font-bold underline text-left"
+                        >
+                          RETURN
+                        </td>
+                      </tr>
+                    )}
+                    {items
+                      .filter(
+                        (i) => i.mode === "Return" && i.desc.trim() !== "",
+                      )
+                      .map((item, index) => (
+                        <tr
+                          key={`rtn-${item.id}`}
+                          className="break-inside-avoid"
+                        >
                           <td className="py-1 align-top text-left">
-                            {item.mode === "Return" ? "RTN" : "SALE"}
+                            {index + 1}
                           </td>
                           <td className="py-1 pr-2 align-top text-left break-words">
                             {item.desc}{" "}
-                            {item.mode === "Return" && item.refBill
-                              ? `(Ref: ${item.refBill})`
-                              : ""}
+                            {item.refBill ? `(Ref: ${item.refBill})` : ""}
                           </td>
                           <td className="py-1 text-center align-top">
-                            {item.qty || "1"}
+                            {item.qty || "1"} {item.unit}
                           </td>
                           <td className="py-1 text-right align-top">
-                            {item.rate || "0.00"}
+                            {(
+                              Math.abs(item.amount) / Math.abs(item.qty || 1)
+                            ).toFixed(2)}
                           </td>
                           <td className="py-1 text-right align-top">
-                            {item.amount || "0.00"}
+                            -{Math.abs(item.amount).toFixed(2)}
                           </td>
                         </tr>
-                      );
-                    })}
+                      ))}
+
                     <tr>
-                      <td colSpan="6" className="pt-2 border-0 p-0">
+                      <td colSpan="5" className="pt-2 border-0 p-0">
                         <div className="break-inside-avoid">
                           <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
                             <div className="flex justify-between w-[65%]">
@@ -2425,14 +2478,21 @@ const TallyBillingPage = () => {
                               </span>
                               <span>{Math.abs(grandTotal).toFixed(2)}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span>PAID NOW (CASH):</span>
-                              <span>{cashPaid || "0"}</span>
-                            </div>
-                            <div className="flex justify-between mb-1">
-                              <span>PAID NOW (UPI/BANK):</span>
-                              <span>{upiPaid || "0"}</span>
-                            </div>
+
+                            {paymentsList
+                              .filter((p) => parseFloat(p.amount) > 0)
+                              .map((p, i) => (
+                                <div
+                                  key={i}
+                                  className="flex justify-between mb-0.5 text-[11px]"
+                                >
+                                  <span>
+                                    PAID ({p.mode}) [
+                                    {p.date.split("-").reverse().join("-")}]:
+                                  </span>
+                                  <span>{parseFloat(p.amount).toFixed(2)}</span>
+                                </div>
+                              ))}
                           </div>
 
                           <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
@@ -2479,19 +2539,18 @@ const TallyBillingPage = () => {
           >
             <colgroup>
               <col style={{ width: "5%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "42%" }} />
-              <col style={{ width: "10%" }} />
+              <col style={{ width: "50%" }} />
+              <col style={{ width: "14%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "17%" }} />
             </colgroup>
 
             <thead className="table-header-group">
               <tr>
-                <td colSpan="6" className="h-[10mm] border-0 p-0"></td>
+                <td colSpan="5" className="h-[10mm] border-0 p-0"></td>
               </tr>
               <tr>
-                <td colSpan="6" className="pb-2 border-0 p-0">
+                <td colSpan="5" className="pb-2 border-0 p-0">
                   <div className="border-t border-b border-dashed border-black py-1 mb-2 flex justify-between items-center font-bold">
                     <span className="text-left">
                       BILL NO:{" "}
@@ -2500,7 +2559,7 @@ const TallyBillingPage = () => {
                     <span className="text-center tracking-wide text-[14px]">
                       {returnsTotal < 0 && salesTotal === 0
                         ? "CREDIT NOTE"
-                        : "TAX INVOICE"}
+                        : "INVOICE"}
                     </span>
                     <span className="text-right">
                       DATE:{" "}
@@ -2563,13 +2622,10 @@ const TallyBillingPage = () => {
                   #
                 </th>
                 <th className="border-t border-b border-dashed border-black py-1 text-left">
-                  TYPE
-                </th>
-                <th className="border-t border-b border-dashed border-black py-1 text-left">
                   ITEM DESCRIPTION
                 </th>
                 <th className="border-t border-b border-dashed border-black py-1 text-center">
-                  QTY
+                  QTY / UNIT
                 </th>
                 <th className="border-t border-b border-dashed border-black py-1 text-right">
                   RATE
@@ -2581,35 +2637,76 @@ const TallyBillingPage = () => {
             </thead>
 
             <tbody>
-              {items.map((item, index) => {
-                if (item.desc.trim() === "") return null;
-                return (
-                  <tr key={item.id} className="break-inside-avoid">
+              {/* --- SALE ITEMS --- */}
+              {items.filter((i) => i.mode === "Sale" && i.desc.trim() !== "")
+                .length > 0 && (
+                <tr>
+                  <td
+                    colSpan="5"
+                    className="py-1 font-bold underline text-left"
+                  >
+                    SALE
+                  </td>
+                </tr>
+              )}
+              {items
+                .filter((i) => i.mode === "Sale" && i.desc.trim() !== "")
+                .map((item, index) => (
+                  <tr key={`sale-${item.id}`} className="break-inside-avoid">
                     <td className="py-1 align-top text-left">{index + 1}</td>
-                    <td className="py-1 align-top text-left">
-                      {item.mode === "Return" ? "RTN" : "SALE"}
-                    </td>
                     <td className="py-1 pr-2 align-top text-left break-words">
-                      {item.desc}{" "}
-                      {item.mode === "Return" && item.refBill
-                        ? `(Ref: ${item.refBill})`
-                        : ""}
+                      {item.desc}
                     </td>
                     <td className="py-1 text-center align-top">
-                      {item.qty || "1"}
+                      {item.qty || "1"} {item.unit}
                     </td>
                     <td className="py-1 text-right align-top">
-                      {item.rate || "0.00"}
+                      {(
+                        Math.abs(item.amount) / Math.abs(item.qty || 1)
+                      ).toFixed(2)}
                     </td>
                     <td className="py-1 text-right align-top">
-                      {item.amount || "0.00"}
+                      {Math.abs(item.amount).toFixed(2)}
                     </td>
                   </tr>
-                );
-              })}
+                ))}
+
+              {/* --- RETURN ITEMS --- */}
+              {items.filter((i) => i.mode === "Return" && i.desc.trim() !== "")
+                .length > 0 && (
+                <tr>
+                  <td
+                    colSpan="5"
+                    className="py-1 pt-3 font-bold underline text-left"
+                  >
+                    RETURN
+                  </td>
+                </tr>
+              )}
+              {items
+                .filter((i) => i.mode === "Return" && i.desc.trim() !== "")
+                .map((item, index) => (
+                  <tr key={`rtn-${item.id}`} className="break-inside-avoid">
+                    <td className="py-1 align-top text-left">{index + 1}</td>
+                    <td className="py-1 pr-2 align-top text-left break-words">
+                      {item.desc} {item.refBill ? `(Ref: ${item.refBill})` : ""}
+                    </td>
+                    <td className="py-1 text-center align-top">
+                      {item.qty || "1"} {item.unit}
+                    </td>
+                    <td className="py-1 text-right align-top">
+                      {(
+                        Math.abs(item.amount) / Math.abs(item.qty || 1)
+                      ).toFixed(2)}
+                    </td>
+                    <td className="py-1 text-right align-top">
+                      -{Math.abs(item.amount).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
 
               <tr className="break-inside-avoid">
-                <td colSpan="6" className="pt-2 border-0 p-0">
+                <td colSpan="5" className="pt-2 border-0 p-0">
                   <div className="border-t border-dashed border-black pt-2 flex flex-col items-end">
                     <div className="flex justify-between w-[65%]">
                       <span>SALES TOTAL:</span>
@@ -2664,14 +2761,21 @@ const TallyBillingPage = () => {
                       </span>
                       <span>{Math.abs(grandTotal).toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>PAID NOW (CASH):</span>
-                      <span>{cashPaid || "0"}</span>
-                    </div>
-                    <div className="flex justify-between mb-1">
-                      <span>PAID NOW (UPI/BANK):</span>
-                      <span>{upiPaid || "0"}</span>
-                    </div>
+
+                    {paymentsList
+                      .filter((p) => parseFloat(p.amount) > 0)
+                      .map((p, i) => (
+                        <div
+                          key={i}
+                          className="flex justify-between mb-0.5 text-[11px]"
+                        >
+                          <span>
+                            PAID ({p.mode}) [
+                            {p.date.split("-").reverse().join("-")}]:
+                          </span>
+                          <span>{parseFloat(p.amount).toFixed(2)}</span>
+                        </div>
+                      ))}
                   </div>
 
                   <div className="border-t border-b border-dashed border-black py-1 mt-1 flex justify-between font-bold">
@@ -2687,7 +2791,7 @@ const TallyBillingPage = () => {
 
             <tfoot className="table-footer-group">
               <tr>
-                <td colSpan="6" className="h-[10mm] border-0 p-0"></td>
+                <td colSpan="5" className="h-[10mm] border-0 p-0"></td>
               </tr>
             </tfoot>
           </table>
