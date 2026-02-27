@@ -11,6 +11,20 @@ const TallyBillingPage = () => {
   const [productSuggestionList, setProductSuggestionList] = useState([]);
   const [activeItemRow, setActiveItemRow] = useState(null);
 
+  // --- REF BILL & RATE HISTORY STATES ---
+  const [activeRefRow, setActiveRefRow] = useState(null);
+  const [highlightedRefIndex, setHighlightedRefIndex] = useState(-1); // Starts at -1 (No selection)
+
+  const [customerPastItems, setCustomerPastItems] = useState([]);
+  //const [activeRateRow, setActiveRateRow] = useState(null);
+  const [activeHistoryCell, setActiveHistoryCell] = useState({
+    row: null,
+    col: null,
+  });
+
+  // --- ADD THESE 3 NEW ITEMS ---
+  const blurTimeoutRef = useRef(null);
+
   // --- CUSTOMER SUGGESTION STATES ---
   const [customerSuggestionList, setCustomerSuggestionList] = useState([]);
   const [highlightedCustomerIndex, setHighlightedCustomerIndex] = useState(0);
@@ -92,6 +106,19 @@ const TallyBillingPage = () => {
   const totalPaid = (parseFloat(cashPaid) || 0) + (parseFloat(upiPaid) || 0);
   const closingBalance = grandTotal - totalPaid;
 
+  const handleHistoryFocus = (index, colName) => {
+    // If the previous cell was trying to close the popup, cancel it!
+    if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+    setActiveHistoryCell({ row: index, col: colName });
+  };
+
+  const handleHistoryBlur = () => {
+    // Start the 250ms closing countdown
+    blurTimeoutRef.current = setTimeout(() => {
+      setActiveHistoryCell({ row: null, col: null });
+    }, 250);
+  };
+
   // --- AUTOSCROLL CUSTOMER DROPDOWN ---
   useEffect(() => {
     if (customerSuggestionList.length > 0) {
@@ -164,6 +191,37 @@ const TallyBillingPage = () => {
         b.customer_mobile === customer.customer_mobile,
     );
     setCustomerPastBills(pastBills);
+
+    // --- EXTRACT ALL PAST PURCHASED ITEMS FOR RATE HISTORY ---
+    let pastItems = [];
+    pastBills.forEach((bill) => {
+      try {
+        const itemsStr = bill.items_json || bill.items;
+        if (itemsStr) {
+          const itemsArr = JSON.parse(itemsStr);
+          itemsArr.forEach((i) => {
+            if (i.desc) {
+              pastItems.push({
+                billNo: bill.id,
+                date: bill.date,
+                desc: i.desc,
+                rate: i.rate,
+                disc:
+                  i.disc_percent !== undefined ? i.disc_percent : i.disc || "",
+                qty: i.qty,
+                mrp: i.mrp,
+                tax: i.tax_percent !== undefined ? i.tax_percent : i.tax || "",
+                refund_rate: i.refund_rate,
+                refund_percentage: i.refund_percentage,
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.error("Error parsing past items", e);
+      }
+    });
+    setCustomerPastItems(pastItems);
 
     // 3. Jump focus to the items grid automatically!
     setTimeout(() => {
@@ -267,15 +325,51 @@ const TallyBillingPage = () => {
       return;
     }
 
+    // --- NEW: PRO-RATA DISCOUNT & SCHEMA MAPPING ---
+    // Calculate the global discount ratio (how much of the net bill is discounted)
+    const discountAmount = parseFloat(globalDiscount) || 0;
+    const discountRatio = netTotal > 0 ? discountAmount / netTotal : 0;
+
+    const formattedItems = validItems.map((item) => {
+      const amt = parseFloat(item.amount) || 0;
+      const q = Math.abs(parseFloat(item.qty) || 1); // Prevent divide by zero
+
+      // Pro-rata math
+      const itemShareOfDiscount = amt * discountRatio;
+      const effectiveAmount = amt - itemShareOfDiscount;
+      const refundRate = effectiveAmount / q;
+      const refundPct = discountRatio * -100; // Negative percentage as requested
+
+      return {
+        type: item.mode.toLowerCase(), // "sale" or "return"
+        id: String(item.id),
+        desc: item.desc,
+        hsn: item.hsn,
+        mrp: item.mrp,
+        disc_percent: parseFloat(item.disc) || 0,
+        rate: parseFloat(item.rate) || 0,
+        qty: parseFloat(item.qty) || 0,
+        unit: item.unit,
+        tax_percent: parseFloat(item.tax) || 0,
+        amount: amt,
+        refund_percentage: parseFloat(refundPct.toFixed(2)),
+        refund_rate: parseFloat(refundRate.toFixed(2)),
+        bill_id: String(billNo), // The current bill being saved
+        stock_action: item.mode === "Return" ? "add" : "subtract",
+        is_adjustment: false,
+        ref_bill: item.refBill || "", // Keeping this so you know original invoice for returns!
+      };
+    });
+
     const payload = {
-      billNo: billNo, // Use the state variable here
+      billNo: billNo,
       date: document.getElementById("date-input")?.value,
       customerName: customerName,
       customerPhone: customerPhone,
       customerAddress: customerAddress,
       refName: document.getElementById("ref-name-input")?.value.trim() || "",
       refPhone: document.getElementById("ref-phone-input")?.value.trim() || "",
-      items: validItems,
+      items: formattedItems, // Send the newly formatted array!
       salesTotal: salesTotal,
       returnsTotal: returnsTotal,
       netTotal: netTotal,
@@ -310,6 +404,38 @@ const TallyBillingPage = () => {
     });
   };
 
+  const applyHistoryRate = (rowIndex, hRate, hDisc, hTax, hMrp) => {
+    const newItems = [...items];
+    const row = newItems[rowIndex];
+
+    if (hRate !== undefined && hRate !== null) row.rate = hRate;
+    if (hDisc !== undefined && hDisc !== null) row.disc = hDisc;
+    if (hTax !== undefined && hTax !== null) row.tax = hTax;
+    if (hMrp !== undefined && hMrp !== null) row.mrp = hMrp;
+
+    // Recalculate Math
+    const q = Math.abs(parseFloat(row.qty) || 0);
+    const r = parseFloat(row.rate) || 0;
+    const t = parseFloat(row.tax) || 0;
+
+    const rateWithTax = r + (r * t) / 100;
+    let finalAmount = q * rateWithTax;
+
+    row.amount = (
+      row.mode === "Return" ? -Math.abs(finalAmount) : Math.abs(finalAmount)
+    ).toFixed(2);
+
+    setItems(newItems);
+    setActiveHistoryCell({ row: null, col: null });
+
+    // Jump to Amount to confirm
+    setTimeout(() => {
+      document
+        .querySelector(`input[data-row="${rowIndex}"][data-col="10"]`)
+        ?.focus();
+    }, 10);
+  };
+
   // --- NEW RESET FUNCTION ---
   const resetForm = () => {
     // Bump Bill Number
@@ -337,6 +463,7 @@ const TallyBillingPage = () => {
     setCustomerSuggestionList([]);
     setCustomerPastBills([]); // Clear past bills table
     setGlobalDiscount("");
+    setCustomerPastItems([]); // Clear item history
     setCashPaid("");
     setUpiPaid("");
     setIsSaved(false); // Unlock saving for the new bill
@@ -1069,8 +1196,8 @@ const TallyBillingPage = () => {
                       </select>
                     </td>
 
-                    {/* Col 1: Ref Bill */}
-                    <td className="p-1 border-r border-gray-200">
+                    {/* Col 1: Ref Bill (Not Mandatory, Smart Enter Key) */}
+                    <td className="p-1 border-r border-gray-200 relative">
                       <input
                         data-row={index}
                         data-col="1"
@@ -1078,11 +1205,104 @@ const TallyBillingPage = () => {
                         onChange={(e) =>
                           updateItem(index, "refBill", e.target.value)
                         }
-                        readOnly={item.mode === "Sale"}
-                        tabIndex={item.mode === "Sale" ? -1 : 0}
-                        className={`${tableInputCSS} uppercase ${item.mode === "Sale" ? "opacity-30 cursor-not-allowed bg-transparent" : "bg-white font-bold"}`}
-                        placeholder={item.mode === "Sale" ? "N/A" : "INV-..."}
+                        onFocus={() => {
+                          setActiveRefRow(index);
+                          setHighlightedRefIndex(-1);
+                        }}
+                        onBlur={() =>
+                          setTimeout(() => setActiveRefRow(null), 200)
+                        }
+                        onKeyDown={(e) => {
+                          const filteredBills = customerPastBills.filter((b) =>
+                            String(b.id)
+                              .toLowerCase()
+                              .includes((item.refBill || "").toLowerCase()),
+                          );
+                          if (
+                            activeRefRow === index &&
+                            filteredBills.length > 0
+                          ) {
+                            if (e.key === "ArrowDown") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setHighlightedRefIndex((prev) =>
+                                prev < filteredBills.length - 1 ? prev + 1 : 0,
+                              );
+                              return;
+                            }
+                            if (e.key === "ArrowUp") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setHighlightedRefIndex((prev) =>
+                                prev > 0 ? prev - 1 : -1,
+                              );
+                              return;
+                            }
+                            if (e.key === "Enter") {
+                              // ONLY intercept Enter if they actually highlighted a row
+                              if (
+                                highlightedRefIndex >= 0 &&
+                                filteredBills[highlightedRefIndex]
+                              ) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                updateItem(
+                                  index,
+                                  "refBill",
+                                  String(filteredBills[highlightedRefIndex].id),
+                                );
+                                setActiveRefRow(null);
+                                return;
+                              }
+                              // If nothing is highlighted (-1), let it naturally jump to the next cell!
+                              setActiveRefRow(null);
+                            }
+                            if (e.key === "Escape") {
+                              setActiveRefRow(null);
+                              return;
+                            }
+                          }
+                          // Notice enforceMandatory is REMOVED from here!
+                        }}
+                        className={`${tableInputCSS} uppercase bg-white font-bold text-[#1e3a8a]`}
+                        placeholder="INV-..."
+                        autoComplete="off"
                       />
+
+                      {/* Ref Bill Dropdown */}
+                      {activeRefRow === index &&
+                        customerPastBills.length > 0 && (
+                          <div className="absolute top-[100%] left-0 w-[120px] bg-white border border-gray-300 shadow-xl rounded-b-md z-50 overflow-hidden">
+                            {customerPastBills
+                              .filter((b) =>
+                                String(b.id)
+                                  .toLowerCase()
+                                  .includes((item.refBill || "").toLowerCase()),
+                              )
+                              .map((bill, i) => (
+                                <div
+                                  key={i}
+                                  onClick={() =>
+                                    updateItem(
+                                      index,
+                                      "refBill",
+                                      String(bill.id),
+                                    )
+                                  }
+                                  className={`p-2 text-[11px] font-bold cursor-pointer border-b border-gray-100 ${highlightedRefIndex === i ? "bg-blue-100 text-[#1e3a8a]" : "hover:bg-blue-50 text-gray-700"}`}
+                                >
+                                  {bill.id}
+                                  <div className="text-[9px] font-normal text-gray-500">
+                                    {bill.date
+                                      ? new Date(bill.date).toLocaleDateString(
+                                          "en-IN",
+                                        )
+                                      : ""}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        )}
                     </td>
 
                     {/* Col 2: Desc */}
@@ -1187,6 +1407,8 @@ const TallyBillingPage = () => {
                         onKeyDown={enforceMandatory}
                         className={`${tableInputCSS} text-center font-bold`}
                         placeholder="0"
+                        onFocus={() => handleHistoryFocus(index, "qty")}
+                        onBlur={handleHistoryBlur}
                       />
                     </td>
 
@@ -1203,6 +1425,8 @@ const TallyBillingPage = () => {
                         }
                         className={`${tableInputCSS} text-center`}
                         placeholder="0"
+                        onFocus={() => handleHistoryFocus(index, "mrp")}
+                        onBlur={handleHistoryBlur}
                       />
                     </td>
 
@@ -1219,11 +1443,13 @@ const TallyBillingPage = () => {
                         }
                         className={`${tableInputCSS} text-center text-blue-600 font-bold`}
                         placeholder="0"
+                        onFocus={() => handleHistoryFocus(index, "disc")}
+                        onBlur={handleHistoryBlur}
                       />
                     </td>
 
-                    {/* Col 7: Rate */}
-                    <td className="p-1 border-r border-gray-200">
+                    {/* Col 7: Rate & MASTER HISTORY POPUP */}
+                    <td className="p-1 border-r border-gray-200 relative">
                       <input
                         data-row={index}
                         data-col="7"
@@ -1233,10 +1459,127 @@ const TallyBillingPage = () => {
                         onChange={(e) =>
                           updateItem(index, "rate", e.target.value)
                         }
+                        onFocus={() => handleHistoryFocus(index, "rate")}
+                        onBlur={handleHistoryBlur}
                         onKeyDown={enforceMandatory}
                         className={`${tableInputCSS} text-right font-bold`}
                         placeholder="0.00"
+                        autoComplete="off"
                       />
+
+                      {/* --- MASTER PRICE & PRO-RATA HISTORY DROPDOWN --- */}
+                      {activeHistoryCell.row === index &&
+                        ["qty", "mrp", "disc", "rate", "tax"].includes(
+                          activeHistoryCell.col,
+                        ) &&
+                        item.desc &&
+                        customerPastItems.filter((p) => p.desc === item.desc)
+                          .length > 0 && (
+                          <div className="absolute top-[100%] right-0 w-[320px] bg-white border border-gray-300 shadow-2xl rounded-b-md z-50 overflow-hidden text-left">
+                            <div className="bg-yellow-50 px-2 py-1.5 text-[10px] font-extrabold text-yellow-800 border-b border-yellow-200 tracking-wider">
+                              {item.mode === "Return" && item.refBill
+                                ? "PRO-RATA REFUND SUGGESTIONS"
+                                : "PAST PURCHASES (THIS CUSTOMER)"}
+                            </div>
+                            <div className="max-h-48 overflow-y-auto">
+                              {customerPastItems
+                                .filter((p) => p.desc === item.desc)
+                                .map((hist, i) => {
+                                  // Check if this specific purchase is the one they entered in the Ref Bill cell
+                                  const isExactRefMatch =
+                                    item.mode === "Return" &&
+                                    String(hist.billNo) ===
+                                      String(item.refBill);
+
+                                  return (
+                                    <div
+                                      key={i}
+                                      className={`p-2 border-b border-gray-100 flex flex-col transition-colors ${isExactRefMatch ? "bg-green-50 border-l-4 border-l-green-500" : "hover:bg-yellow-50 bg-white"}`}
+                                    >
+                                      <div className="flex justify-between items-center mb-1">
+                                        <div>
+                                          <span className="font-bold text-[#1e3a8a]">
+                                            {hist.billNo}
+                                          </span>
+                                          <span className="text-gray-500 text-[9px] ml-2">
+                                            {hist.date
+                                              ? new Date(
+                                                  hist.date,
+                                                ).toLocaleDateString("en-IN")
+                                              : ""}
+                                          </span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-600 font-medium">
+                                          Past Qty: {hist.qty}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex justify-between items-stretch mt-1 gap-2">
+                                        {/* Standard Rate Button */}
+                                        <button
+                                          tabIndex="-1"
+                                          onClick={() =>
+                                            applyHistoryRate(
+                                              index,
+                                              hist.rate,
+                                              hist.disc,
+                                              hist.tax,
+                                              hist.mrp,
+                                            )
+                                          }
+                                          className="flex-1 bg-white border border-gray-300 rounded px-2 py-1 text-[10px] hover:bg-gray-100 text-left transition-colors"
+                                        >
+                                          <div className="font-bold text-gray-800">
+                                            ₹{hist.rate}{" "}
+                                            <span className="text-red-500 font-normal ml-0.5">
+                                              (-{hist.disc || 0}%)
+                                            </span>
+                                          </div>
+                                          <div className="text-[9px] text-gray-500 mt-0.5">
+                                            Standard Rate
+                                          </div>
+                                        </button>
+
+                                        {/* Pro-Rata Refund Button (Only shows if they got a global discount on that bill) */}
+                                        {hist.refund_rate !== undefined &&
+                                          hist.refund_rate !== hist.rate && (
+                                            <button
+                                              tabIndex="-1"
+                                              onClick={() =>
+                                                applyHistoryRate(
+                                                  index,
+                                                  hist.refund_rate,
+                                                  Math.abs(
+                                                    hist.refund_percentage || 0,
+                                                  ),
+                                                  hist.tax,
+                                                  hist.mrp,
+                                                )
+                                              }
+                                              className={`flex-1 border rounded px-2 py-1 text-[10px] text-left transition-colors ${isExactRefMatch ? "bg-green-100 border-green-300 hover:bg-green-200" : "bg-white border-gray-300 hover:bg-gray-100"}`}
+                                            >
+                                              <div className="font-bold text-green-800">
+                                                ₹{hist.refund_rate}{" "}
+                                                <span className="text-green-600 font-normal ml-0.5">
+                                                  (-
+                                                  {Math.abs(
+                                                    hist.refund_percentage || 0,
+                                                  )}
+                                                  %)
+                                                </span>
+                                              </div>
+                                              <div className="text-[9px] text-green-700 mt-0.5">
+                                                Pro-Rata Refund
+                                              </div>
+                                            </button>
+                                          )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
                     </td>
 
                     {/* Col 8: Unit */}
@@ -1360,6 +1703,8 @@ const TallyBillingPage = () => {
                         }
                         className={`${tableInputCSS} text-center`}
                         placeholder="0"
+                        onFocus={() => handleHistoryFocus(index, "tax")}
+                        onBlur={handleHistoryBlur}
                       />
                     </td>
 
