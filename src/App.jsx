@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { PlusSquare, Package, History } from "lucide-react";
 import TallyBillingPage from "./pages/TallyBillingPage";
+import BillHistoryPage from "./pages/BillHistoryPage";
 import { DataProvider } from "./context/DataContextMain";
 
-// Refined placeholder components for empty states
+// Placeholder component for inventory
 const InventoryPage = () => (
   <div className="h-full flex items-center justify-center text-gray-500 font-medium">
     <div className="flex flex-col items-center gap-2">
@@ -13,27 +14,16 @@ const InventoryPage = () => (
   </div>
 );
 
-const BillHistoryPage = () => (
-  <div className="h-full flex items-center justify-center text-gray-500 font-medium">
-    <div className="flex flex-col items-center gap-2">
-      <History size={48} className="text-gray-300" />
-      <p>Bill History Coming Soon...</p>
-    </div>
-  </div>
-);
-
 const App = () => {
-  // State to track which tab is currently active
   const [activeTab, setActiveTab] = useState("billing");
+
+  // NEW: State to hold the bill we want to edit
+  const [editBillData, setEditBillData] = useState(null);
 
   return (
     <DataProvider>
-      {/* // ADDED: print:h-auto print:bg-white print:block // This stops the */}
-      {/* browser from treating the A5 paper like a scrollable website */}
       <div className="flex flex-col font-sans h-screen w-full bg-gray-50 print:h-auto print:bg-white print:block">
-        {/* HEADER: ADDED print:hidden! This is what was causing the blue bar to print */}
         <header className="flex items-center bg-[#1e3a8a] text-white h-14 justify-between shadow-md z-20 print:hidden">
-          {/* Brand/Logo Area */}
           <div className="flex items-center gap-3 px-6">
             <div className="bg-white text-[#1e3a8a] font-black px-2 py-1 rounded-md text-sm tracking-widest shadow-sm">
               GE
@@ -43,7 +33,6 @@ const App = () => {
             </h1>
           </div>
 
-          {/* Tab Navigation */}
           <nav className="flex h-full">
             <button
               onClick={() => setActiveTab("billing")}
@@ -55,7 +44,6 @@ const App = () => {
             >
               <PlusSquare size={16} /> Create Bill
             </button>
-
             <button
               onClick={() => setActiveTab("inventory")}
               className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 text-[13px] tracking-wide ${
@@ -66,7 +54,6 @@ const App = () => {
             >
               <Package size={16} /> Product List
             </button>
-
             <button
               onClick={() => setActiveTab("history")}
               className={`flex items-center gap-2 px-6 h-full transition-all border-b-4 text-[13px] tracking-wide ${
@@ -80,12 +67,21 @@ const App = () => {
           </nav>
         </header>
 
-        {/* MAIN CONTENT: ADDED print:overflow-visible print:bg-white print:block */}
-        {/* This ensures the hidden A5 print layout can expand safely without getting cut off */}
         <main className="flex-1 overflow-y-auto relative w-full bg-gray-50 print:overflow-visible print:bg-white print:block">
-          {activeTab === "billing" && <TallyBillingPage />}
+          {/* Passing the edit props down! */}
+          {activeTab === "billing" && (
+            <TallyBillingPage
+              editBillData={editBillData}
+              setEditBillData={setEditBillData}
+            />
+          )}
           {activeTab === "inventory" && <InventoryPage />}
-          {activeTab === "history" && <BillHistoryPage />}
+          {activeTab === "history" && (
+            <BillHistoryPage
+              setActiveTab={setActiveTab}
+              setEditBillData={setEditBillData}
+            />
+          )}
         </main>
       </div>
     </DataProvider>

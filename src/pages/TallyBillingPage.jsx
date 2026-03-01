@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useContext } from "react";
 import { Trash2, X, Plus } from "lucide-react";
 import { DataContext } from "../context/DataContextMain";
 
-const TallyBillingPage = () => {
+const TallyBillingPage = ({ editBillData, setEditBillData }) => {
   const dataContext = useContext(DataContext);
   const [dataForProductList, setDataForProductList] = useState([]);
   const [dataForBillList, setDataForBillList] = useState([]);
@@ -110,6 +110,138 @@ const TallyBillingPage = () => {
     (sum, bill) => sum + parseFloat(bill.amount || 0),
     0,
   );
+
+  // --- EDIT BILL DATA LOADER ---
+  useEffect(() => {
+    if (editBillData) {
+      // 1. Load Bill No & Date
+      setBillNo(String(editBillData.id));
+      const dateInput = document.getElementById("date-input");
+      if (dateInput && editBillData.date) {
+        const d = new Date(editBillData.date);
+        if (!isNaN(d)) {
+          // Converts safely to YYYY-MM-DD
+          const localDate = new Date(
+            d.getTime() - d.getTimezoneOffset() * 60000,
+          )
+            .toISOString()
+            .split("T")[0];
+          dateInput.value = localDate;
+        }
+      }
+
+      // 2. Load Customer & Ref Details
+      document.getElementById("customer-name-input").value =
+        editBillData.customer_name || "";
+      document.getElementById("customer-phone-input").value =
+        editBillData.customer_mobile || "";
+      const addr = document.querySelector(
+        'input[placeholder="Enter Address..."]',
+      );
+      if (addr) addr.value = editBillData.customer_address || "";
+      document.getElementById("ref-name-input").value =
+        editBillData.ref_name || "";
+      document.getElementById("ref-phone-input").value =
+        editBillData.ref_mobile || "";
+      const remarks = document.getElementById("remarks-input");
+      if (remarks) remarks.value = editBillData.remarks || "";
+
+      // 3. Load Financials
+      setGlobalDiscount(editBillData.bill_discount || "");
+
+      // 4. Load Items
+      try {
+        const rawItems = JSON.parse(
+          editBillData.items_json || editBillData.items || "[]",
+        );
+        const mappedItems = rawItems.map((i, idx) => ({
+          id: Date.now() + idx,
+          mode: (i.type || "").toLowerCase() === "return" ? "Return" : "Sale",
+          refBill: i.ref_bill || "",
+          desc: i.desc || "",
+          hsn: i.hsn || "",
+          stock: 0,
+          mrp: i.mrp || "",
+          qty: String(i.qty || ""),
+          unit: i.unit || "Pcs",
+          rate: String(i.rate || ""),
+          tax: String(i.tax_percent || ""),
+          disc: String(i.disc_percent || ""),
+          amount: String(i.amount || "0.00"),
+        }));
+
+        // Add one empty row for continued editing
+        mappedItems.push({
+          id: Date.now() + 1000,
+          mode: "Sale",
+          refBill: "",
+          desc: "",
+          hsn: "",
+          stock: 0,
+          mrp: "",
+          qty: "",
+          unit: "Pcs",
+          rate: "",
+          tax: "",
+          disc: "",
+          amount: "0.00",
+        });
+        setItems(mappedItems);
+      } catch (e) {
+        console.error("Error parsing items", e);
+      }
+
+      // 5. Load Payments
+      try {
+        const rawPayments = JSON.parse(
+          editBillData.payments_json || editBillData.payments || "[]",
+        );
+        if (Array.isArray(rawPayments) && rawPayments.length > 0) {
+          // Map from schema DD-MM-YYYY back to YYYY-MM-DD for the HTML input field
+          setPaymentsList(
+            rawPayments.map((p, idx) => {
+              let formattedDate = new Date().toISOString().split("T")[0];
+              if (p.date) {
+                const parts = p.date.split("-");
+                if (parts.length === 3)
+                  formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+              }
+              return {
+                id: Date.now() + idx,
+                date: formattedDate,
+                amount: String(p.amount || ""),
+                mode: p.mode || "CASH",
+              };
+            }),
+          );
+        }
+      } catch (e) {
+        console.error("Error parsing payments", e);
+      }
+
+      // 6. Load Linked Bills
+      try {
+        const rawLinked = JSON.parse(editBillData.previous_bills || "[]");
+        if (Array.isArray(rawLinked) && rawLinked.length > 0) {
+          setLinkedBills(
+            rawLinked.map((b) => ({
+              id: String(b.id || b.no),
+              no: String(b.no || b.id),
+              amount: parseFloat(b.amount) || 0,
+            })),
+          );
+        }
+      } catch (e) {
+        console.error("Error parsing linked bills", e);
+      }
+
+      // 7. Lock it in "Update" mode so saving replaces the existing sheet row
+      setIsSaved(true);
+
+      // Clear the trigger memory so it doesn't loop
+      if (setEditBillData) setEditBillData(null);
+    }
+  }, [editBillData, setEditBillData]);
 
   const grandTotal = currentBill + prevBalance;
   const totalPaid = paymentsList.reduce(
@@ -2344,9 +2476,7 @@ const TallyBillingPage = () => {
                         <td
                           colSpan="5"
                           className="py-1 font-bold underline text-left"
-                        >
-                          SALE
-                        </td>
+                        ></td>
                       </tr>
                     )}
                     {items
@@ -2644,9 +2774,7 @@ const TallyBillingPage = () => {
                   <td
                     colSpan="5"
                     className="py-1 font-bold underline text-left"
-                  >
-                    SALE
-                  </td>
+                  ></td>
                 </tr>
               )}
               {items
